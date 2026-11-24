@@ -213,6 +213,56 @@ void testPlans(const fs::path &dir)
     EXPECT(planOutline(store) == "Three acts[qwen/qwen3.5-9b] Plan 3[other-model] New[hand]");
 }
 
+void testBriefsAndImport(const fs::path &dir)
+{
+    using NA = NovelStore::NewAct;
+    using NC = NovelStore::NewChapter;
+    using NS = NovelStore::NewScene;
+    const std::vector<NA> planned{
+        NA{"Act 1: Setup", "Mira's world.",
+           {NC{"Chapter 1: The Letter", "Discovery.", {NS{"The Letter", "POV: Mira. She finds it."}, NS{"The Council", ""}}},
+            NC{"Chapter 2: Silence", "", {}}}},
+        NA{"Act 2", "", {NC{"Chapter 3: Storm", "", {NS{"Waves", "She nearly drowns."}}}}}};
+    Id existingScene = 0;
+    {
+        NovelStore store(dir, NovelStore::Mode::Create);
+        const Id act = store.addAct(0, "Old act");
+        const Id chapter = store.addChapter(act, 0, "Old chapter");
+        existingScene = store.addScene(chapter, 0, "Old scene", "Old text.");
+        store.setBrief(chapter, "An old brief");
+        EXPECT(store.acts()[0].chapters[0].brief == "An old brief");
+        store.setBrief(chapter, "");
+        EXPECT(store.acts()[0].chapters[0].brief.empty());
+
+        // Append after the existing structure.
+        const auto first = store.importStructure(planned, false);
+        EXPECT(outline(store) == "Old act[Old chapter(Old scene)] Act 1: Setup[Chapter 1: The Letter(The Letter,The Council),"
+                                 "Chapter 2: Silence()] Act 2[Chapter 3: Storm(Waves)]");
+        EXPECT(first && store.kindOf(*first) == NovelStore::Kind::Scene && *first > existingScene);
+        EXPECT(store.acts()[1].brief == "Mira's world.");
+        EXPECT(store.acts()[1].chapters[0].scenes[0].brief == "POV: Mira. She finds it.");
+        EXPECT(store.sceneText(*first).empty());
+        EXPECT(store.sceneText(existingScene) == "Old text.");
+    }
+    {
+        NovelStore store(dir, NovelStore::Mode::Open); // everything persisted, briefs included
+        EXPECT(store.acts().size() == 3);
+        EXPECT(store.acts()[1].chapters[0].brief == "Discovery.");
+        EXPECT(store.acts()[2].chapters[0].scenes[0].brief == "She nearly drowns.");
+        EXPECT(store.acts()[1].chapters[0].scenes[1].brief.empty());
+
+        // Replace everything.
+        const auto first = store.importStructure({NA{"New", "", {NC{"Ch", "", {NS{"S", "brief"}}}}}}, true);
+        EXPECT(outline(store) == "New[Ch(S)]");
+        EXPECT(throws<std::invalid_argument>([&] { store.sceneText(existingScene); }));
+        EXPECT(first && store.acts()[0].chapters[0].scenes[0].id == *first);
+        EXPECT(store.importStructure({}, false) == std::nullopt); // nothing to add
+        store.remove(store.acts()[0].id);
+    }
+    NovelStore store(dir, NovelStore::Mode::Open); // replaced and removed nodes left nothing behind
+    EXPECT(store.acts().empty());
+}
+
 void testPlanChat(const fs::path &dir)
 {
     Id plan = 0, other = 0;
@@ -344,6 +394,7 @@ int main(int argc, char **argv)
         testPlans(root / "plans.novel");
         testPlanModelOverride(root / "override.novel");
         testPlanChat(root / "chat.novel");
+        testBriefsAndImport(root / "import.novel");
         testUpgradeFromFormat2(root);
         testErrors(root);
     } catch (const std::exception &e) {

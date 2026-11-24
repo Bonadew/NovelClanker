@@ -411,6 +411,78 @@ void testChatHistoryIsRestored(const fs::path &dir)
            transcript->toPlainText().contains("Act 2 is where Mira travels."));
 }
 
+QString treeOutline(QTreeWidget *tree)
+{
+    QStringList acts;
+    for (int a = 0; a < tree->topLevelItemCount(); ++a) {
+        QTreeWidgetItem *act = tree->topLevelItem(a);
+        QStringList chapters;
+        for (int c = 0; c < act->childCount(); ++c) {
+            QStringList scenes;
+            for (int s = 0; s < act->child(c)->childCount(); ++s) {
+                scenes << act->child(c)->child(s)->text(0);
+            }
+            chapters << act->child(c)->text(0) + "(" + scenes.join(',') + ")";
+        }
+        acts << act->text(0) + "[" + chapters.join(',') + "]";
+    }
+    return acts.join(' ');
+}
+
+void testCreateStructureFromPlan(const fs::path &dir)
+{
+    FakeServer server;
+    useServer(server, "planner-x");
+    const QString plan = "# The Letter\n\n## Story spine\n1. Mira finds a letter (Act 1)\n\n## Structure\n\n"
+                         "### Act 1: Home\nMira's world.\n\n"
+                         "#### Chapter 1: The Cold Room\nIntroduce Mira's grief.\n"
+                         "- **Scene 1: The Letter**: POV: Mira. Setting: her brother's room. She finds the letter.\n"
+                         "- **Scene 2: The Council**: POV: Mira. The council offers her the post.\n\n"
+                         "### Act 2: Away\n\n#### Chapter 2: The Storm\n"
+                         "- **Scene 1: Waves**: POV: Mira. She nearly loses the letter.\n\n"
+                         "## Open questions\n- Who knew?\n";
+    {
+        MainWindow w;
+        EXPECT(w.openNovel(toQ(dir), NovelStore::Mode::Create));
+        const Ui u = ui(w);
+        auto *tree = w.findChild<QTreeWidget *>("manuscriptTree");
+        auto *brief = w.findChild<QLabel *>("briefLabel");
+        auto *create = w.findChild<QPushButton *>("createStructureButton");
+        EXPECT(tree && brief && create);
+        EXPECT(treeOutline(tree) == "Act 1[Chapter 1(Scene 1)]"); // a new novel's untouched start
+        EXPECT(!create->isEnabled());                             // no plan selected
+
+        u.newPlan->click();
+        u.plan->insertPlainText(plan);
+        EXPECT(create->isEnabled());
+        create->click(); // the untouched start is replaced without asking
+
+        EXPECT(treeOutline(tree) == "Act 1: Home[Chapter 1: The Cold Room(The Letter,The Council)] "
+                                    "Act 2: Away[Chapter 2: The Storm(Waves)]");
+        EXPECT(u.tabs->currentIndex() == 0); // back on the Manuscript tab
+        EXPECT(tree->currentItem() && tree->currentItem()->text(0) == "The Letter");
+        EXPECT(!brief->isHidden() &&
+               brief->text() == "Brief: POV: Mira. Setting: her brother's room. She finds the letter.");
+        tree->setCurrentItem(tree->topLevelItem(0)->child(0));
+        EXPECT(brief->text() == "Brief: Introduce Mira's grief.");
+        tree->setCurrentItem(tree->topLevelItem(1)); // Act 2 has no brief
+        EXPECT(brief->isHidden());
+
+        // Scenes start empty and are ready for writing.
+        tree->setCurrentItem(tree->topLevelItem(0)->child(0)->child(1));
+        auto *scene = w.findChild<QPlainTextEdit *>("sceneEdit");
+        EXPECT(scene->isEnabled() && scene->toPlainText().isEmpty());
+        scene->insertPlainText("The council hall was cold.");
+        w.close();
+    }
+    NovelStore store(dir, NovelStore::Mode::Open);
+    EXPECT(store.acts().size() == 2);
+    EXPECT(store.acts()[0].brief == "Mira's world.");
+    EXPECT(store.acts()[0].chapters[0].scenes[1].brief == "POV: Mira. The council offers her the post.");
+    EXPECT(store.sceneText(store.acts()[0].chapters[0].scenes[1].id) == "The council hall was cold.");
+    EXPECT(store.plans().size() == 1); // the plan itself is unchanged
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -434,6 +506,7 @@ int main(int argc, char **argv)
     testPlannerModelOverride(root / "override.novel");
     testChatRefinesPlan(root / "chat.novel");
     testChatHistoryIsRestored(root / "chat.novel");
+    testCreateStructureFromPlan(root / "structure.novel");
 
     QSettings().clear();
     if (g_failures == 0) {

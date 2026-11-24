@@ -164,11 +164,14 @@ NovelStore::NovelStore(const std::filesystem::path &dir, Mode mode) : m_path(dir
     }
 
     for (Id actId : decodeIds(get(kActsKey))) {
-        Act act{actId, get(key("act", actId, "title")), {}};
+        const auto brief = [this](const char *kind, Id id) {
+            return getOptional(*m_db, key(kind, id, "brief"), "Cannot read novel");
+        };
+        Act act{actId, get(key("act", actId, "title")), {}, brief("act", actId)};
         for (Id chapterId : decodeIds(get(key("act", actId, "chapters")))) {
-            Chapter chapter{chapterId, get(key("chapter", chapterId, "title")), {}};
+            Chapter chapter{chapterId, get(key("chapter", chapterId, "title")), {}, brief("chapter", chapterId)};
             for (Id sceneId : decodeIds(get(key("chapter", chapterId, "scenes")))) {
-                chapter.scenes.push_back({sceneId, get(key("scene", sceneId, "title"))});
+                chapter.scenes.push_back({sceneId, get(key("scene", sceneId, "title")), brief("scene", sceneId)});
             }
             act.chapters.push_back(std::move(chapter));
         }
@@ -333,6 +336,89 @@ void NovelStore::rename(Id id, std::string_view title)
     }
 }
 
+void NovelStore::setBrief(Id id, std::string_view brief)
+{
+    const Location where = require(id);
+    static constexpr const char *kKindNames[] = {"act", "chapter", "scene"};
+    const std::string k = key(kKindNames[static_cast<int>(where.kind)], id, "brief");
+    check(brief.empty() ? m_db->Delete(durableWrites(), k) : m_db->Put(durableWrites(), k, slice(brief)),
+          "Cannot save brief");
+    Act &act = m_acts[where.act];
+    switch (where.kind) {
+    case Kind::Act:
+        act.brief = brief;
+        break;
+    case Kind::Chapter:
+        act.chapters[where.chapter].brief = brief;
+        break;
+    case Kind::Scene:
+        act.chapters[where.chapter].scenes[where.scene].brief = brief;
+        break;
+    }
+}
+
+std::optional<NovelStore::Id> NovelStore::importStructure(const std::vector<NewAct> &newActs, bool replace)
+{
+    rocksdb::WriteBatch batch;
+    std::vector<Act> acts = replace ? std::vector<Act>{} : m_acts;
+    if (replace) {
+        for (const Act &act : m_acts) {
+            for (const Chapter &chapter : act.chapters) {
+                for (const Scene &scene : chapter.scenes) {
+                    for (const char *field : {"title", "text", "brief"}) {
+                        batch.Delete(key("scene", scene.id, field));
+                    }
+                }
+                for (const char *field : {"title", "scenes", "brief"}) {
+                    batch.Delete(key("chapter", chapter.id, field));
+                }
+            }
+            for (const char *field : {"title", "chapters", "brief"}) {
+                batch.Delete(key("act", act.id, field));
+            }
+        }
+    }
+
+    Id next = m_nextId;
+    std::optional<Id> firstScene;
+    const auto putBrief = [&](const char *kind, Id id, const std::string &brief) {
+        if (!brief.empty()) {
+            batch.Put(key(kind, id, "brief"), brief);
+        }
+    };
+    for (const NewAct &newAct : newActs) {
+        Act act{next++, newAct.title, {}, newAct.brief};
+        batch.Put(key("act", act.id, "title"), act.title);
+        putBrief("act", act.id, act.brief);
+        for (const NewChapter &newChapter : newAct.chapters) {
+            Chapter chapter{next++, newChapter.title, {}, newChapter.brief};
+            batch.Put(key("chapter", chapter.id, "title"), chapter.title);
+            putBrief("chapter", chapter.id, chapter.brief);
+            for (const NewScene &newScene : newChapter.scenes) {
+                Scene scene{next++, newScene.title, newScene.brief};
+                batch.Put(key("scene", scene.id, "title"), scene.title);
+                batch.Put(key("scene", scene.id, "text"), "");
+                putBrief("scene", scene.id, scene.brief);
+                if (!firstScene) {
+                    firstScene = scene.id;
+                }
+                chapter.scenes.push_back(std::move(scene));
+            }
+            batch.Put(key("chapter", chapter.id, "scenes"), encodeIds(chapter.scenes));
+            act.chapters.push_back(std::move(chapter));
+        }
+        batch.Put(key("act", act.id, "chapters"), encodeIds(act.chapters));
+        acts.push_back(std::move(act));
+    }
+    batch.Put(slice(kActsKey), encodeIds(acts));
+    batch.Put(slice(kNextIdKey), std::to_string(next));
+    check(m_db->Write(durableWrites(), &batch), "Cannot create the structure");
+
+    m_acts = std::move(acts);
+    m_nextId = next;
+    return firstScene;
+}
+
 std::string NovelStore::sceneText(Id scene) const
 {
     require(scene, Kind::Scene);
@@ -460,6 +546,7 @@ void NovelStore::remove(Id id)
     const auto deleteScene = [&](const Scene &scene) {
         batch.Delete(key("scene", scene.id, "title"));
         batch.Delete(key("scene", scene.id, "text"));
+        batch.Delete(key("scene", scene.id, "brief"));
     };
     const auto deleteChapter = [&](const Chapter &chapter) {
         for (const Scene &scene : chapter.scenes) {
@@ -467,6 +554,7 @@ void NovelStore::remove(Id id)
         }
         batch.Delete(key("chapter", chapter.id, "title"));
         batch.Delete(key("chapter", chapter.id, "scenes"));
+        batch.Delete(key("chapter", chapter.id, "brief"));
     };
 
     Act &act = acts[where.act];
@@ -477,6 +565,7 @@ void NovelStore::remove(Id id)
         }
         batch.Delete(key("act", id, "title"));
         batch.Delete(key("act", id, "chapters"));
+        batch.Delete(key("act", id, "brief"));
         acts.erase(at(acts, where.act));
         batch.Put(slice(kActsKey), encodeIds(acts));
         break;

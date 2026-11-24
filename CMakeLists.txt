@@ -39,6 +39,8 @@ add_library(novelai STATIC
     src/PlanChat.cpp
     src/PlanChat.h
     src/PlanPrompt.cpp
+    src/PlanStructure.cpp
+    src/PlanStructure.h
     src/PlanPrompt.h
 )
 target_include_directories(novelai PUBLIC src)
@@ -167,6 +169,11 @@ if(BUILD_TESTING)
     novelwriter_warnings(chat_test)
     add_test(NAME chat COMMAND chat_test)
 
+    add_executable(planstructure_test tests/PlanStructureTest.cpp)
+    target_link_libraries(planstructure_test PRIVATE novelai)
+    novelwriter_warnings(planstructure_test)
+    add_test(NAME planstructure COMMAND planstructure_test)
+
     add_executable(mainwindow_test tests/MainWindowTest.cpp)
     target_link_libraries(mainwindow_test PRIVATE novelui)
     novelwriter_warnings(mainwindow_test)
@@ -177,7 +184,7 @@ if(BUILD_TESTING)
         "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${QT_BIN_DIR}/../plugins")
     if(WIN32)
         # Find the Qt DLLs without relying on windeployqt having run.
-        set_tests_properties(lmstudio settings chat mainwindow PROPERTIES
+        set_tests_properties(lmstudio settings chat planstructure mainwindow PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${QT_BIN_DIR}")
     endif()
 endif()

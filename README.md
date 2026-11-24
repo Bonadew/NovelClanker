@@ -31,6 +31,11 @@ Runs on Windows, Linux, and macOS.
   "(by hand)". **+ New Plan** adds an empty plan to write yourself, **Delete** removes one (with confirmation),
   and double-clicking a plan's name renames it. Plans can be edited freely and save automatically; editing a
   generated plan doesn't change which model it is recorded as coming from.
+- **Create Structure** (Plan tab) builds the manuscript's acts, chapters and scenes from the selected plan,
+  reading its `### Act`, `#### Chapter` and `- **Scene N: Title**: ...` lines (common variations are understood;
+  only the plan's Structure section is read). Each act, chapter and scene gets the plan's description as its
+  **brief**, shown above the editor; scene text starts empty. A new novel's untouched first scene is simply
+  replaced; otherwise you choose to add the structure after the existing manuscript or to replace it.
 - Under the plan, a **chat box** talks to the model that generated the selected plan (for a plan written by
   hand: this novel's planner model) to refine it. Ask for changes ("give Act 2 a stronger midpoint") and the
   model's revised plan replaces the plan as one edit, so Ctrl+Z in the plan undoes it; questions just get an
@@ -78,10 +83,13 @@ children, so restructuring never rewrites scene text. Ids are unique across all 
 | `novel/acts`          | act ids in order, comma-separated       |
 | `act/<id>/title`      | act title                               |
 | `act/<id>/chapters`   | chapter ids in order                    |
+| `act/<id>/brief`      | what the act is for (optional)          |
 | `chapter/<id>/title`  | chapter title                           |
 | `chapter/<id>/scenes` | scene ids in order                      |
+| `chapter/<id>/brief`  | what the chapter is for (optional)      |
 | `scene/<id>/title`    | scene title                             |
 | `scene/<id>/text`     | scene Markdown                          |
+| `scene/<id>/brief`    | what happens in the scene (optional)    |
 | `novel/synopsis`      | synopsis, exactly as written (optional) |
 | `novel/plan_model`    | planner model override (optional)       |
 | `novel/plans`         | plan ids in order                       |
@@ -185,5 +193,6 @@ src/LmChat.*              Streamed chat completions (OpenAI-compatible), reasoni
 src/PlanPrompt.*          The prompt that turns a synopsis into a plan
 src/PlanChat.*            Plan refinement chat: prompt, reply parsing, history
 src/PlanChatPanel.*       The chat box under the plan
-tests/                    Storage, LM Studio, chat, settings and main window tests (run via CTest)
+src/PlanStructure.*       Reads acts/chapters/scenes (with briefs) out of a plan
+tests/                    Storage, LM Studio, chat, plan parsing, settings and main window tests (CTest)
 ```

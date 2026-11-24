@@ -9,6 +9,7 @@
 #include "PlanChat.h"
 #include "PlanChatPanel.h"
 #include "PlanPrompt.h"
+#include "PlanStructure.h"
 #include "SettingsDialog.h"
 
 #include <QAction>
@@ -199,6 +200,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     // --- Left panel: add buttons above the act/chapter/scene tree ----------------------------------
     m_tree = new NovelTree(this);
+    m_tree->setObjectName("manuscriptTree");
     m_tree->setContextMenuPolicy(Qt::ActionsContextMenu);
     for (QAction *action : {m_renameAction, m_deleteAction, m_moveUpAction, m_moveDownAction}) {
         m_tree->addAction(action);
@@ -224,7 +226,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     auto *splitter = new QSplitter(this);
     splitter->addWidget(leftPanel);
-    splitter->addWidget(m_editor);
+    m_briefLabel = new QLabel(this);
+    m_briefLabel->setObjectName("briefLabel");
+    m_briefLabel->setWordWrap(true);
+    m_briefLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_briefLabel->setFrameShape(QFrame::StyledPanel);
+    m_briefLabel->setMargin(6);
+    m_briefLabel->hide();
+    auto *editorPane = new QWidget(this);
+    auto *editorLayout = new QVBoxLayout(editorPane);
+    editorLayout->setContentsMargins(0, 0, 0, 0);
+    editorLayout->addWidget(m_briefLabel);
+    editorLayout->addWidget(m_editor, 1);
+    splitter->addWidget(editorPane);
     splitter->setStretchFactor(1, 1);
     splitter->setSizes({260, 840});
 
@@ -701,6 +715,29 @@ void MainWindow::showItem(QTreeWidgetItem *item)
         m_editor->setPlaceholderText(
             tr("Select a scene to write it. Acts and chapters group scenes; use + Scene to add one."));
     }
+
+    // The selected node's brief (e.g. from the plan it was created from).
+    QString brief;
+    if (m_store && item) {
+        const Id id = itemId(item);
+        for (const auto &act : m_store->acts()) {
+            if (act.id == id) {
+                brief = QString::fromStdString(act.brief);
+            }
+            for (const auto &chapter : act.chapters) {
+                if (chapter.id == id) {
+                    brief = QString::fromStdString(chapter.brief);
+                }
+                for (const auto &scene : chapter.scenes) {
+                    if (scene.id == id) {
+                        brief = QString::fromStdString(scene.brief);
+                    }
+                }
+            }
+        }
+    }
+    m_briefLabel->setText(brief.isEmpty() ? QString() : tr("Brief: %1").arg(brief));
+    m_briefLabel->setVisible(!brief.isEmpty());
     updateActions();
     updateStatus();
 }
@@ -844,6 +881,10 @@ QWidget *MainWindow::buildPlanView()
     top->addWidget(m_planOrigin);
     top->addWidget(m_planStatus, 1);
     top->addWidget(m_stopButton);
+    m_createStructureButton = new QPushButton(tr("Create Structure"), view);
+    m_createStructureButton->setObjectName("createStructureButton");
+    m_createStructureButton->setToolTip(tr("Create the manuscript's acts, chapters and scenes from this plan"));
+    top->addWidget(m_createStructureButton);
 
     m_planEdit = makeTextEditor(view);
     m_planEdit->setObjectName("planEdit");
@@ -893,6 +934,7 @@ QWidget *MainWindow::buildPlanView()
     connect(m_planList, &QTreeWidget::itemChanged, this, &MainWindow::onPlanRenamed);
     connect(m_newPlanButton, &QPushButton::clicked, this, &MainWindow::newPlan);
     connect(m_deletePlanButton, &QPushButton::clicked, this, &MainWindow::deletePlan);
+    connect(m_createStructureButton, &QPushButton::clicked, this, &MainWindow::createStructureFromPlan);
     connect(m_chat, &PlanChatPanel::submitted, this, &MainWindow::sendChatMessage);
     connect(m_chat, &PlanChatPanel::replied, this, &MainWindow::onChatReply);
     connect(m_chat, &PlanChatPanel::busyChanged, this, [this](bool busy) { lockPlanEditing(busy); });
@@ -1030,6 +1072,7 @@ void MainWindow::showPlan(QTreeWidgetItem *item)
     }
     m_planOrigin->setText(origin);
     m_deletePlanButton->setEnabled(plan.has_value() && !m_planRequest);
+    m_createStructureButton->setEnabled(plan.has_value() && !m_planRequest);
 
     QList<PlanChat::Turn> history;
     if (plan) {
@@ -1209,6 +1252,7 @@ void MainWindow::lockPlanEditing(bool locked)
     m_planList->setEnabled(!locked);
     m_newPlanButton->setEnabled(!locked);
     m_deletePlanButton->setEnabled(!locked && m_currentPlan.has_value());
+    m_createStructureButton->setEnabled(!locked && m_currentPlan.has_value());
     m_generateButton->setEnabled(!locked && m_store != nullptr);
     updatePlannerStatus();
 }
@@ -1361,6 +1405,111 @@ void MainWindow::updatePlannerStatus()
     }
     m_synopsisStatus->setText(status);
     updateChatState();
+}
+
+bool MainWindow::manuscriptIsUntouched() const
+{
+    // Nothing, or just the "Act 1 / Chapter 1 / Scene 1" a new novel starts with, never written in.
+    const auto &acts = m_store->acts();
+    if (acts.empty()) {
+        return true;
+    }
+    if (acts.size() != 1 || acts[0].chapters.size() != 1 || acts[0].chapters[0].scenes.size() != 1) {
+        return false;
+    }
+    const auto &act = acts[0];
+    const auto &chapter = act.chapters[0];
+    const auto &scene = chapter.scenes[0];
+    return act.title == tr("Act 1").toStdString() && chapter.title == tr("Chapter 1").toStdString() &&
+           scene.title == tr("Scene 1").toStdString() && act.brief.empty() && chapter.brief.empty() &&
+           scene.brief.empty() && wordsIn(scene.id) == 0;
+}
+
+void MainWindow::createStructureFromPlan()
+{
+    if (!m_store || !m_currentPlan || m_planRequest || m_chat->isBusy() || !savePlan() || !saveCurrentScene()) {
+        return;
+    }
+    const QList<PlanStructure::Act> parsed = PlanStructure::parse(editorText(m_planEdit));
+    const PlanStructure::Counts counts = PlanStructure::count(parsed);
+    if (counts.acts == 0) {
+        QMessageBox::information(
+            this, tr("Create Structure"),
+            tr("No acts, chapters or scenes were found in this plan. The structure is read from headings such as "
+               "\"### Act 1: ...\" and \"#### Chapter 1: ...\" and scene lines such as \"- **Scene 1: Title**: "
+               "...\"."));
+        return;
+    }
+    const QString summary = tr("This plan has %1 act(s), %2 chapter(s) and %3 scene(s).")
+                                .arg(counts.acts)
+                                .arg(counts.chapters)
+                                .arg(counts.scenes);
+
+    bool replace = true;
+    if (!manuscriptIsUntouched()) {
+        int scenes = 0;
+        for (const auto &act : m_store->acts()) {
+            for (const auto &chapter : act.chapters) {
+                scenes += static_cast<int>(chapter.scenes.size());
+            }
+        }
+        const qsizetype words = wordsIn(0);
+        QMessageBox box(QMessageBox::Question, tr("Create Structure"),
+                        summary + "\n\n" +
+                            tr("The manuscript already has %n scene(s)", nullptr, scenes) +
+                            tr(" with %n word(s). Add the plan's structure after it, or replace the manuscript?",
+                               nullptr, int(words)),
+                        QMessageBox::Cancel, this);
+        QPushButton *append = box.addButton(tr("Add After Existing"), QMessageBox::AcceptRole);
+        QPushButton *replaceButton = box.addButton(tr("Replace Manuscript..."), QMessageBox::DestructiveRole);
+        box.setDefaultButton(append);
+        box.exec();
+        if (box.clickedButton() == append) {
+            replace = false;
+        } else if (box.clickedButton() == replaceButton) {
+            if (words > 0 &&
+                QMessageBox::warning(this, tr("Replace Manuscript"),
+                                     tr("Delete all %n scene(s) of the manuscript", nullptr, scenes) +
+                                         tr(", with %n word(s)? This cannot be undone.", nullptr, int(words)),
+                                     QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
+                return;
+            }
+        } else {
+            return;
+        }
+    }
+
+    std::vector<NovelStore::NewAct> acts;
+    for (const PlanStructure::Act &act : parsed) {
+        NovelStore::NewAct newAct{act.title.toStdString(), act.brief.toStdString(), {}};
+        for (const PlanStructure::Chapter &chapter : act.chapters) {
+            NovelStore::NewChapter newChapter{chapter.title.toStdString(), chapter.brief.toStdString(), {}};
+            for (const PlanStructure::Scene &scene : chapter.scenes) {
+                newChapter.scenes.push_back({scene.title.toStdString(), scene.brief.toStdString()});
+            }
+            newAct.chapters.push_back(std::move(newChapter));
+        }
+        acts.push_back(std::move(newAct));
+    }
+
+    m_autosaveTimer->stop();
+    m_currentScene.reset(); // saved above; the open scene may be replaced
+    std::optional<Id> first;
+    if (!attempt(tr("Could not create the structure."), [&] { first = m_store->importStructure(acts, replace); })) {
+        rebuildTree(std::nullopt);
+        return;
+    }
+    if (replace) {
+        m_sceneWords.clear();
+        m_collapsed.clear();
+    }
+    rebuildTree(first);
+    m_tabs->setCurrentIndex(0); // Manuscript
+    statusBar()->showMessage(tr("Created %1 act(s), %2 chapter(s) and %3 scene(s) from the plan.")
+                                 .arg(counts.acts)
+                                 .arg(counts.chapters)
+                                 .arg(counts.scenes),
+                             6000);
 }
 
 QString MainWindow::chatModel() const

@@ -78,6 +78,8 @@ class MainWindow : public QMainWindow
     QString nextPlanTitle() const;
     void finishGeneratedPlan(); // common cleanup after a generation ends
     void lockPlanEditing(bool locked);
+    void createStructureFromPlan();
+    bool manuscriptIsUntouched() const; // empty, or only a new novel's untouched first scene
 
     // Chat about the selected plan
     QString chatModel() const; // the model that generated the plan, else this novel's planner model
@@ -118,6 +120,7 @@ class MainWindow : public QMainWindow
 
     NovelTree *m_tree = nullptr;
     QPlainTextEdit *m_editor = nullptr;
+    QLabel *m_briefLabel = nullptr; // brief of the selected act/chapter/scene
     MarkdownHighlighter *m_highlighter = nullptr;
     QTimer *m_autosaveTimer = nullptr;
 
@@ -136,6 +139,7 @@ class MainWindow : public QMainWindow
     QTreeWidget *m_planList = nullptr;
     QPushButton *m_newPlanButton = nullptr;
     QPushButton *m_deletePlanButton = nullptr;
+    QPushButton *m_createStructureButton = nullptr;
     QLabel *m_planOrigin = nullptr;
     QPlainTextEdit *m_planEdit = nullptr;
     PlanChatPanel *m_chat = nullptr;

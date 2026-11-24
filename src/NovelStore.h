@@ -28,6 +28,15 @@ class StorageError : public std::runtime_error
 //   novel/format          format version ("3")
 //   novel/next_id         next unused id (decimal)
 //   novel/acts            act ids in order (comma-separated decimals)
+//   act/<id>/title        act title
+//   act/<id>/chapters     chapter ids in order
+//   act/<id>/brief        what the act is for, e.g. from the plan (optional)
+//   chapter/<id>/title    chapter title
+//   chapter/<id>/scenes   scene ids in order
+//   chapter/<id>/brief    what the chapter is for (optional)
+//   scene/<id>/title      scene title
+//   scene/<id>/text       scene Markdown
+//   scene/<id>/brief      what happens in the scene: POV, setting, goal, conflict, outcome (optional)
 //   novel/synopsis        the synopsis, exactly as written (optional; missing = empty)
 //   novel/plan_model      model to generate plans with, overriding the app setting (optional)
 //   novel/plans           plan ids in order
@@ -37,12 +46,6 @@ class StorageError : public std::runtime_error
 //   plan/<id>/chat        conversation about the plan (JSON, owned by the UI; optional)
 //
 // Format 2 novels (a single "novel/plan" entry) are upgraded to format 3 when opened.
-//   act/<id>/title        act title
-//   act/<id>/chapters     chapter ids in order
-//   chapter/<id>/title    chapter title
-//   chapter/<id>/scenes   scene ids in order
-//   scene/<id>/title      scene title
-//   scene/<id>/text       scene Markdown
 //
 // The structure (titles and ordering) is loaded into memory on open; scene text is read on demand.
 // RocksDB locks the database while it is open, so a novel can only be opened by one NovelStore (or
@@ -58,18 +61,37 @@ class NovelStore
     struct Scene {
         Id id;
         std::string title;
+        std::string brief; // empty if none
     };
 
     struct Chapter {
         Id id;
         std::string title;
         std::vector<Scene> scenes;
+        std::string brief;
     };
 
     struct Act {
         Id id;
         std::string title;
         std::vector<Chapter> chapters;
+        std::string brief;
+    };
+
+    // A structure to add in one go (see importStructure()).
+    struct NewScene {
+        std::string title;
+        std::string brief;
+    };
+    struct NewChapter {
+        std::string title;
+        std::string brief;
+        std::vector<NewScene> scenes;
+    };
+    struct NewAct {
+        std::string title;
+        std::string brief;
+        std::vector<NewChapter> chapters;
     };
 
     struct Plan {
@@ -110,6 +132,12 @@ class NovelStore
     Id addScene(Id chapter, std::size_t position, std::string_view title, std::string_view text = {});
 
     void rename(Id id, std::string_view title);
+    void setBrief(Id id, std::string_view brief); // empty removes it
+
+    // Adds a whole structure (scenes start without text) in one atomic write, after the existing acts, or
+    // in place of everything if `replace` is true (deleting all existing acts, chapters, scenes and their
+    // text). Returns the id of the first new scene, if any.
+    std::optional<Id> importStructure(const std::vector<NewAct> &acts, bool replace);
 
     std::string sceneText(Id scene) const;
     void setSceneText(Id scene, std::string_view markdown);
