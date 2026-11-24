@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LmStudioClient.h"
 #include "NovelStore.h"
 
 #include <QMainWindow>
@@ -11,15 +12,18 @@
 #include <unordered_set>
 
 class QAction;
+class QComboBox;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
 class QTabWidget;
+class QTreeWidget;
 class QTimer;
 class QTreeWidgetItem;
 class ChatCompletion;
 class MarkdownHighlighter;
 class NovelTree;
+class PlanChatPanel;
 
 class MainWindow : public QMainWindow
 {
@@ -66,6 +70,21 @@ class MainWindow : public QMainWindow
     void loadSynopsisAndPlan();
     bool saveSynopsis();
     bool savePlan();
+    void refreshPlanList(std::optional<Id> select);
+    void showPlan(QTreeWidgetItem *item);
+    void newPlan();
+    void deletePlan();
+    void onPlanRenamed(QTreeWidgetItem *item, int column);
+    QString nextPlanTitle() const;
+    void finishGeneratedPlan(); // common cleanup after a generation ends
+    void lockPlanEditing(bool locked);
+
+    // Chat about the selected plan
+    QString chatModel() const; // the model that generated the plan, else this novel's planner model
+    void updateChatState();
+    void sendChatMessage(const QString &message);
+    void onChatReply(const QString &message, const QString &reply, bool truncated);
+    void clearChat();
     bool saveAll(); // scene, synopsis and plan
     void generatePlan();
     void stopPlanGeneration();
@@ -74,6 +93,11 @@ class MainWindow : public QMainWindow
     void showPlanText(const QString &text);
     void setPlanGenerating(bool generating);
     void updatePlannerStatus();
+    void openSettings();
+    void refreshPlanModels();      // fetch the server's models for the planner dropdown
+    void populatePlanModelCombo(); // "Settings default" + server models, selecting the novel's choice
+    void onPlanModelChosen();
+    QString effectivePlanModel() const; // the novel's choice, else the planner model from Settings
     QPlainTextEdit *focusedEditor() const;
 
     // Tree and status
@@ -102,15 +126,29 @@ class MainWindow : public QMainWindow
     QTimer *m_synopsisTimer = nullptr;
     QLabel *m_synopsisStatus = nullptr;
     QPushButton *m_generateButton = nullptr;
+    QComboBox *m_planModelCombo = nullptr;
+    QPushButton *m_refreshModelsButton = nullptr;
+    LmStudioClient *m_modelClient = nullptr;
+    QList<LmModel> m_serverModels;
+    bool m_modelsFetched = false;
+    QString m_modelsError;
     QWidget *m_planView = nullptr;
+    QTreeWidget *m_planList = nullptr;
+    QPushButton *m_newPlanButton = nullptr;
+    QPushButton *m_deletePlanButton = nullptr;
+    QLabel *m_planOrigin = nullptr;
     QPlainTextEdit *m_planEdit = nullptr;
+    PlanChatPanel *m_chat = nullptr;
+    std::optional<Id> m_chatPlan; // plan the running chat request is about
     QTimer *m_planTimer = nullptr;
     QLabel *m_planStatus = nullptr;
     QPushButton *m_stopButton = nullptr;
     QTimer *m_planRefresh = nullptr; // throttles redraws while a plan streams in
     QString m_pendingPlanText;
     QPointer<ChatCompletion> m_planRequest;
-    QString m_planBeforeGeneration; // restored if generation fails
+    std::optional<Id> m_currentPlan;        // plan shown in the editor
+    std::optional<Id> m_generatingPlan;     // plan being written by the planner model
+    std::optional<Id> m_planBeforeGeneration; // selected again if generation produces nothing
     QString m_planModel;
     bool m_synopsisDirty = false; // unsaved changes
     bool m_planDirty = false;

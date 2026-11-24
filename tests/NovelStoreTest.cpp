@@ -3,10 +3,14 @@
 
 #include "NovelStore.h"
 
+#include <rocksdb/db.h>
+#include <rocksdb/write_batch.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -149,29 +153,159 @@ void testRemovedEntriesAreGone(const fs::path &dir)
     EXPECT(outline(store) == "Act[]");
 }
 
-void testSynopsisAndPlan(const fs::path &dir)
+void testSynopsis(const fs::path &dir)
 {
     // Stored byte-for-byte: CRLF, tabs, trailing/leading whitespace, non-breaking spaces, emoji, NUL.
     const std::string synopsis =
         std::string("  A tale\r\n\tof two\xC2\xA0" "cities \xF0\x9F\x8F\x99\n\n  ") + '\0' + "end ";
-    const std::string plan = "# Plan\n\n## Act 1\n";
     {
         NovelStore store(dir, NovelStore::Mode::Create);
-        EXPECT(store.synopsis().empty() && store.plan().empty()); // optional entries
+        EXPECT(store.synopsis().empty()); // optional entry
         store.setSynopsis(synopsis);
-        store.setPlan(plan);
         EXPECT(store.synopsis() == synopsis);
+    }
+    NovelStore store(dir, NovelStore::Mode::Open);
+    EXPECT(store.synopsis() == synopsis);
+    EXPECT(store.synopsis().size() == synopsis.size());
+}
+
+std::string planOutline(const NovelStore &store)
+{
+    std::string out;
+    for (const auto &plan : store.plans()) {
+        out += (out.empty() ? "" : " ") + plan.title + "[" + (plan.model.empty() ? "hand" : plan.model) + "]";
+    }
+    return out;
+}
+
+void testPlans(const fs::path &dir)
+{
+    Id byHand = 0, generated = 0, second = 0;
+    {
+        NovelStore store(dir, NovelStore::Mode::Create);
+        EXPECT(store.plans().empty());
+        const Id act = store.addAct(0, "Act");
+        byHand = store.addPlan("My plan", "# Mine\n");
+        generated = store.addPlan("Plan 2", "# Generated\n\n## Act 1\n", "qwen/qwen3.5-9b");
+        second = store.addPlan("Plan 3", "", "other-model");
+        EXPECT(planOutline(store) == "My plan[hand] Plan 2[qwen/qwen3.5-9b] Plan 3[other-model]");
+        EXPECT(byHand > act && generated > byHand && second > generated); // ids shared with the structure
+        EXPECT(!store.kindOf(byHand));                                    // plans aren't structure nodes
+
+        store.setPlanText(generated, "# Generated, then edited by hand\n");
+        store.renamePlan(generated, "Three acts");
+        EXPECT(store.planText(byHand) == "# Mine\n");
+        EXPECT(store.planText(second).empty());
+        EXPECT(throws<std::invalid_argument>([&] { store.planText(act); }));
+        EXPECT(throws<std::invalid_argument>([&] { store.renamePlan(12345, "x"); }));
     }
     {
         NovelStore store(dir, NovelStore::Mode::Open);
-        EXPECT(store.synopsis() == synopsis);
-        EXPECT(store.synopsis().size() == synopsis.size());
-        EXPECT(store.plan() == plan);
-        store.setPlan("");
+        // The generating model is remembered across edits and reopening.
+        EXPECT(planOutline(store) == "My plan[hand] Three acts[qwen/qwen3.5-9b] Plan 3[other-model]");
+        EXPECT(store.planText(generated) == "# Generated, then edited by hand\n");
+        store.removePlan(byHand);
+        EXPECT(planOutline(store) == "Three acts[qwen/qwen3.5-9b] Plan 3[other-model]");
+        EXPECT(throws<std::invalid_argument>([&] { store.planText(byHand); }));
+        EXPECT(store.addPlan("New", "") > second); // ids never reused
     }
     NovelStore store(dir, NovelStore::Mode::Open);
-    EXPECT(store.plan().empty());
-    EXPECT(store.synopsis() == synopsis);
+    EXPECT(planOutline(store) == "Three acts[qwen/qwen3.5-9b] Plan 3[other-model] New[hand]");
+}
+
+void testPlanChat(const fs::path &dir)
+{
+    Id plan = 0, other = 0;
+    {
+        NovelStore store(dir, NovelStore::Mode::Create);
+        plan = store.addPlan("Plan 1", "# Plan", "m");
+        other = store.addPlan("Plan 2", "# Other");
+        EXPECT(store.planChat(plan).empty());
+        store.setPlanChat(plan, R"([{"role":"user","content":"Shorter act 1"}])");
+        EXPECT(throws<std::invalid_argument>([&] { store.planChat(999); }));
+    }
+    {
+        NovelStore store(dir, NovelStore::Mode::Open);
+        EXPECT(store.planChat(plan) == R"([{"role":"user","content":"Shorter act 1"}])");
+        EXPECT(store.planChat(other).empty()); // each plan has its own conversation
+        store.setPlanChat(plan, "");           // cleared
+        EXPECT(store.planChat(plan).empty());
+        store.setPlanChat(other, "[]");
+        store.removePlan(other);
+        const Id again = store.addPlan("Plan 3", "");
+        EXPECT(store.planChat(again).empty());
+    }
+}
+
+void testPlanModelOverride(const fs::path &dir)
+{
+    {
+        NovelStore store(dir, NovelStore::Mode::Create);
+        EXPECT(store.planModelOverride().empty()); // default: use the app setting
+        store.setPlanModelOverride("big-planner-70b");
+    }
+    {
+        NovelStore store(dir, NovelStore::Mode::Open);
+        EXPECT(store.planModelOverride() == "big-planner-70b");
+        store.setPlanModelOverride(""); // back to the setting
+    }
+    NovelStore store(dir, NovelStore::Mode::Open);
+    EXPECT(store.planModelOverride().empty());
+}
+
+// Writes a novel in format 2 (single "novel/plan" entry) directly with RocksDB.
+void writeFormat2Novel(const fs::path &dir, const std::string &plan)
+{
+    rocksdb::Options options;
+    options.create_if_missing = true;
+    options.compression = rocksdb::kLZ4Compression;
+    std::unique_ptr<rocksdb::DB> db;
+    const auto u8 = dir.u8string();
+    rocksdb::Status s = rocksdb::DB::Open(options, std::string(u8.begin(), u8.end()), &db);
+    EXPECT(s.ok());
+    rocksdb::WriteBatch batch;
+    batch.Put("novel/format", "2");
+    batch.Put("novel/next_id", "4");
+    batch.Put("novel/acts", "1");
+    batch.Put("act/00000000000000000001/title", "Act 1");
+    batch.Put("act/00000000000000000001/chapters", "2");
+    batch.Put("chapter/00000000000000000002/title", "Chapter 1");
+    batch.Put("chapter/00000000000000000002/scenes", "3");
+    batch.Put("scene/00000000000000000003/title", "Scene 1");
+    batch.Put("scene/00000000000000000003/text", "Once.");
+    batch.Put("novel/synopsis", "A synopsis.");
+    if (!plan.empty()) {
+        batch.Put("novel/plan", plan);
+    }
+    EXPECT(db->Write({}, &batch).ok());
+    db->Close();
+}
+
+void testUpgradeFromFormat2(const fs::path &root)
+{
+    {
+        const fs::path dir = root / "format2.novel";
+        writeFormat2Novel(dir, "# Old plan\n");
+        {
+            NovelStore store(dir, NovelStore::Mode::Open);
+            EXPECT(planOutline(store) == "Plan 1[hand]"); // how it was made wasn't recorded
+            EXPECT(store.planText(store.plans().at(0).id) == "# Old plan\n");
+            EXPECT(store.plans().at(0).id == 4); // next free id
+            EXPECT(store.synopsis() == "A synopsis.");
+            EXPECT(outline(store) == "Act 1[Chapter 1(Scene 1)]");
+            EXPECT(store.addAct(1, "Act 2") == 5);
+        }
+        NovelStore store(dir, NovelStore::Mode::Open); // now format 3: opens without upgrading again
+        EXPECT(planOutline(store) == "Plan 1[hand]");
+        EXPECT(outline(store) == "Act 1[Chapter 1(Scene 1)] Act 2[]");
+    }
+    {
+        const fs::path dir = root / "format2-noplan.novel";
+        writeFormat2Novel(dir, "");
+        NovelStore store(dir, NovelStore::Mode::Open);
+        EXPECT(store.plans().empty());
+        EXPECT(store.addPlan("P", "") == 4);
+    }
 }
 
 void testErrors(const fs::path &root)
@@ -206,7 +340,11 @@ int main(int argc, char **argv)
         // Non-ASCII folder name (needs UTF-8 filename support in RocksDB on Windows).
         testStructure(root / fs::path(u8"Mitt Äventyr 小説.novel"));
         testRemovedEntriesAreGone(root / "removed.novel");
-        testSynopsisAndPlan(root / "synopsis.novel");
+        testSynopsis(root / "synopsis.novel");
+        testPlans(root / "plans.novel");
+        testPlanModelOverride(root / "override.novel");
+        testPlanChat(root / "chat.novel");
+        testUpgradeFromFormat2(root);
         testErrors(root);
     } catch (const std::exception &e) {
         std::fprintf(stderr, "FAIL: unexpected exception: %s\n", e.what());

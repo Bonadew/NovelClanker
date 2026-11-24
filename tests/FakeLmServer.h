@@ -25,7 +25,7 @@ class FakeServer : public QObject
 
     QHash<QString, Response> routes;
     QStringList requested;      // request paths, in order
-    QByteArray lastRequestBody; // body of the most recent request
+    QByteArray lastRequestBody; // body of the most recent request that had one
     bool silent = false;        // accept connections but never answer (to test timeouts)
 
     FakeServer()
@@ -64,7 +64,9 @@ class FakeServer : public QObject
             return;
         }
         const QString path = QString::fromLatin1(buffer.split(' ').value(1));
-        lastRequestBody = buffer.mid(headerEnd + 4, contentLength);
+        if (contentLength > 0) {
+            lastRequestBody = buffer.mid(headerEnd + 4, contentLength);
+        }
         m_buffers.remove(socket);
         requested << path;
 

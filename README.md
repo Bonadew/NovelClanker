@@ -27,11 +27,23 @@ Runs on Windows, Linux, and macOS.
   LM Studio's server. Settings are stored per user (QSettings), not in the novel.
 
 - The **Synopsis** tab holds the novel's synopsis: write or paste it there. It is stored exactly as written.
-- **Generate Plan** (on the Synopsis tab) asks the planner model to turn the synopsis into a plan. The plan
-  streams into the **Plan** tab as it is written (**Stop** keeps what has been written so far) and can then be
-  edited freely; it is saved automatically like everything else. Reasoning ("thinking") output from reasoning
-  models is left out. If the model hits its length limit the plan view says so; raise the model's context
-  length in LM Studio (a full plan needs roughly 8-16k tokens).
+- A novel can have **several plans**, listed on the **Plan** tab with the model that generated each one, or
+  "(by hand)". **+ New Plan** adds an empty plan to write yourself, **Delete** removes one (with confirmation),
+  and double-clicking a plan's name renames it. Plans can be edited freely and save automatically; editing a
+  generated plan doesn't change which model it is recorded as coming from.
+- Under the plan, a **chat box** talks to the model that generated the selected plan (for a plan written by
+  hand: this novel's planner model) to refine it. Ask for changes ("give Act 2 a stronger midpoint") and the
+  model's revised plan replaces the plan as one edit, so Ctrl+Z in the plan undoes it; questions just get an
+  answer. The model always sees the synopsis and the *current* plan, including your own edits. Each plan keeps
+  its own conversation (**Clear** forgets it). Enter sends, Shift+Enter starts a new line.
+- Next to **Generate Plan**, the **Planner model** dropdown chooses the model for this novel's plans. It lists
+  the LM Studio server's models (**Refresh** fetches them again); "Settings default" uses the planner model
+  from Edit → Settings, and any other choice overrides it. The choice is saved with the novel.
+- **Generate Plan** (on the Synopsis tab) asks the planner model to turn the synopsis into a **new** plan;
+  existing plans are never replaced. The plan streams into the Plan tab as it is written (**Stop** keeps what
+  has been written so far). Reasoning ("thinking") output from reasoning models is left out. If generation
+  fails or produces nothing, no plan is added. If the model hits its length limit the plan view says so; raise
+  the model's context length in LM Studio (a full plan needs roughly 8-16k tokens).
 
 ### The plan prompt
 
@@ -61,7 +73,7 @@ children, so restructuring never rewrites scene text. Ids are unique across all 
 
 | Key                   | Value                                   |
 |-----------------------|-----------------------------------------|
-| `novel/format`        | format version (`2`)                    |
+| `novel/format`        | format version (`3`)                    |
 | `novel/next_id`       | next unused id                          |
 | `novel/acts`          | act ids in order, comma-separated       |
 | `act/<id>/title`      | act title                               |
@@ -71,7 +83,15 @@ children, so restructuring never rewrites scene text. Ids are unique across all 
 | `scene/<id>/title`    | scene title                             |
 | `scene/<id>/text`     | scene Markdown                          |
 | `novel/synopsis`      | synopsis, exactly as written (optional) |
-| `novel/plan`          | plan, Markdown (optional)               |
+| `novel/plan_model`    | planner model override (optional)       |
+| `novel/plans`         | plan ids in order                       |
+| `plan/<id>/title`     | plan title                              |
+| `plan/<id>/text`      | plan Markdown                           |
+| `plan/<id>/model`     | generating model; absent if by hand     |
+| `plan/<id>/chat`      | conversation about the plan (JSON)      |
+
+Novels from earlier versions (format 2, with a single `novel/plan`) are upgraded when opened: that plan
+becomes "Plan 1". Its model wasn't recorded then, so it shows as "(by hand)".
 
 Writes are synced to disk and multi-key changes are atomic (RocksDB write batches). RocksDB locks an open
 novel, so only one NovelWriter can have it open at a time. See `src/NovelStore.h`.
@@ -131,7 +151,8 @@ LM Studio (`NOVELWRITER_LIVE_LMSTUDIO=http://127.0.0.1:1234`):
 
 - `settings_test` also lists the server's models in the settings view.
 - `chat_test` with `NOVELWRITER_LIVE_PLANNER_MODEL=<model id>` also generates a plan from a sample synopsis
-  (written to `NOVELWRITER_LIVE_PLAN_OUT` if set).
+  (written to `NOVELWRITER_LIVE_PLAN_OUT` if set). With `NOVELWRITER_LIVE_REFINE_PLAN=<plan file>` and
+  `NOVELWRITER_LIVE_REFINE_REQUEST="..."` it refines that plan through the plan chat instead.
 
 For a Debug build, run `conan install` again with `-s build_type=Debug` and use the `conan-debug` presets.
 
@@ -159,7 +180,10 @@ src/NovelStore.*          RocksDB novel storage (no Qt dependency)
 src/LmStudioClient.*      LM Studio client: fetches models (native REST API, with fallbacks)
 src/AiSettings.*          Server address and model choices (QSettings)
 src/SettingsDialog.*      Settings view
+src/ModelCombo.*          Model dropdowns (shared by Settings and Synopsis views)
 src/LmChat.*              Streamed chat completions (OpenAI-compatible), reasoning removal
 src/PlanPrompt.*          The prompt that turns a synopsis into a plan
+src/PlanChat.*            Plan refinement chat: prompt, reply parsing, history
+src/PlanChatPanel.*       The chat box under the plan
 tests/                    Storage, LM Studio, chat, settings and main window tests (run via CTest)
 ```

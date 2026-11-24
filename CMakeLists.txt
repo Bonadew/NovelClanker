@@ -36,6 +36,8 @@ add_library(novelai STATIC
     src/LmChat.h
     src/LmStudioClient.cpp
     src/LmStudioClient.h
+    src/PlanChat.cpp
+    src/PlanChat.h
     src/PlanPrompt.cpp
     src/PlanPrompt.h
 )
@@ -50,8 +52,12 @@ add_library(novelui STATIC
     src/MainWindow.h
     src/MarkdownHighlighter.cpp
     src/MarkdownHighlighter.h
+    src/ModelCombo.cpp
+    src/ModelCombo.h
     src/NovelTree.cpp
     src/NovelTree.h
+    src/PlanChatPanel.cpp
+    src/PlanChatPanel.h
     src/SettingsDialog.cpp
     src/SettingsDialog.h
 )
@@ -142,7 +148,7 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     add_executable(novelstore_test tests/NovelStoreTest.cpp)
-    target_link_libraries(novelstore_test PRIVATE novelstore)
+    target_link_libraries(novelstore_test PRIVATE novelstore RocksDB::rocksdb) # RocksDB: writes old formats
     novelwriter_warnings(novelstore_test)
     add_test(NAME novelstore COMMAND novelstore_test "${CMAKE_CURRENT_BINARY_DIR}/test-data")
 

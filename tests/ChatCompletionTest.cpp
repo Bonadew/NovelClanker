@@ -2,12 +2,14 @@
 
 #include "FakeLmServer.h"
 #include "LmChat.h"
+#include "PlanChat.h"
 #include "PlanPrompt.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QRegularExpression>
 #include <QTimer>
 
 #include <cstdio>
@@ -79,6 +81,66 @@ void testPrompt()
     EXPECT(messages[1].content.endsWith(synopsis + "\n\"\"\""));
     EXPECT(messages[1].content.contains("### Act 1:") && messages[1].content.contains("#### Chapter 1:") &&
            messages[1].content.contains("- **Scene 1:"));
+}
+
+void testPlanChat()
+{
+    using PlanChat::Turn;
+    // History round trip.
+    const QList<Turn> history{{"user", "Shorter Act 1", false}, {"assistant", "Merged chapters 2 and 3.", true},
+                              {"user", "Why?", false}, {"assistant", "Pacing.", false}};
+    const QList<Turn> back = PlanChat::parse(PlanChat::serialize(history));
+    EXPECT(back.size() == 4 && back[1].planApplied && !back[3].planApplied && back[2].content == "Why?");
+    EXPECT(PlanChat::serialize({}).isEmpty() && PlanChat::parse("").isEmpty() && PlanChat::parse("not json").isEmpty());
+
+    // Messages: the current plan and synopsis go in the system prompt; revised plans aren't repeated.
+    const QList<ChatMessage> m = PlanChat::messages("The synopsis.", "# Current plan", history, "Add a subplot");
+    EXPECT(m.size() == 6);
+    EXPECT(m[0].role == "system" && m[0].content.contains("<synopsis>\nThe synopsis.\n</synopsis>") &&
+           m[0].content.contains("<current_plan>\n# Current plan\n</current_plan>") && m[0].content.contains("<plan>"));
+    EXPECT(m[2].role == "assistant" && m[2].content.startsWith("Merged chapters 2 and 3.") &&
+           m[2].content.contains("includes this revision"));
+    EXPECT(m[4].content == "Pacing.");
+    EXPECT(m[5].role == "user" && m[5].content.startsWith("Add a subplot") &&
+           m[5].content.contains("complete plan")); // reminder on the latest message only
+    EXPECT(m[1].content == "Shorter Act 1");
+
+    // Partial revisions are detected.
+    QString full = "# Plan\n\n## Structure\n";
+    for (int a = 1; a <= 3; ++a) {
+        full += QString("\n### Act %1: A\n").arg(a);
+        for (int c = 1; c <= 4; ++c) {
+            full += QString("\n#### Chapter %1: C\n- **Scene 1: S**: something happens here.\n").arg((a - 1) * 4 + c);
+        }
+    }
+    QString longer = full;
+    longer.replace("#### Chapter 5: C\n", "#### Chapter 5: C\n- **Scene 0: New**: an added scene.\n");
+    EXPECT(PlanChat::incompleteReason(full, longer).isEmpty());
+    EXPECT(PlanChat::incompleteReason(full, full.left(full.indexOf("### Act 3"))).contains("2 of the plan's 3 acts"));
+    const QString excerpt = "#### Chapter 10: C\n- **Scene 1: S**: x\n#### Chapter 11: C\n- **Scene 1: S**: y\n";
+    EXPECT(!PlanChat::incompleteReason(full, excerpt).isEmpty());
+    QString noActs = full;
+    noActs.remove(QRegularExpression("### Act \\d: A\n"));
+    EXPECT(PlanChat::incompleteReason(full, noActs).contains("acts"));
+    EXPECT(PlanChat::incompleteReason("# Short plan", "# Even shorter").isEmpty()); // tiny plans aren't judged
+
+    // Replies.
+    PlanChat::Reply r = PlanChat::parseReply("Tightened Act 1.\n\n<plan>\n# Plan\n\n### Act 1: Home\n</plan>\n");
+    EXPECT(r.message == "Tightened Act 1." && r.plan && *r.plan == "# Plan\n\n### Act 1: Home" && !r.planCutOff);
+    r = PlanChat::parseReply("Done.\n<plan>\n```markdown\n# Fenced\n```\n</plan>\nTell me if you want more.");
+    EXPECT(r.plan && *r.plan == "# Fenced" && r.message == "Done.\n\nTell me if you want more.");
+    r = PlanChat::parseReply("The midpoint is in chapter 9.");
+    EXPECT(r.message == "The midpoint is in chapter 9." && !r.plan);
+    r = PlanChat::parseReply("Revised.\n<plan>\n# Plan\n### Act 1");
+    EXPECT(r.message == "Revised." && !r.plan && r.planCutOff);
+    r = PlanChat::parseReply("<plan>\n   \n</plan>");
+    EXPECT(!r.plan && r.message.isEmpty());
+
+    // Streaming display hides the plan block (and a tag still arriving).
+    int words = -1;
+    EXPECT(PlanChat::streamingMessage("Working on it.\n<pl", &words) == "Working on it." && words == 0);
+    EXPECT(PlanChat::streamingMessage("Done.\n<plan>\n# Plan one two", &words) == "Done." && words == 4);
+    EXPECT(PlanChat::streamingMessage("Done.\n<plan>\n# P\n</plan>\nMore?", &words) == "Done.\n\nMore?");
 }
 
 void testStreaming()
@@ -171,7 +233,8 @@ void testAbort()
 }
 
 // Optional: generate a real plan. Set NOVELWRITER_LIVE_LMSTUDIO (server) and NOVELWRITER_LIVE_PLANNER_MODEL;
-// the plan is written to NOVELWRITER_LIVE_PLAN_OUT (or printed).
+// the plan is written to NOVELWRITER_LIVE_PLAN_OUT (or printed). With NOVELWRITER_LIVE_REFINE_PLAN set to a plan
+// file, the plan is instead refined through the plan chat with NOVELWRITER_LIVE_REFINE_REQUEST.
 void livePlan()
 {
     const QString server = qEnvironmentVariable("NOVELWRITER_LIVE_LMSTUDIO");
@@ -190,10 +253,21 @@ void livePlan()
         "winter's worst storm Mira sails north alone in her brother's boat. She delivers the letter to the widow "
         "of the Albatross's captain, testifies at the reopened inquiry, and returns to Skarra knowing she will "
         "never be welcome there again, but relighting the lamp one last time before handing over the keys.");
+    QList<ChatMessage> messages = PlanPrompt::messages(synopsis);
+    double temperature = PlanPrompt::kTemperature;
+    const QString refinePath = qEnvironmentVariable("NOVELWRITER_LIVE_REFINE_PLAN");
+    if (!refinePath.isEmpty()) {
+        QFile file(refinePath);
+        EXPECT(file.open(QIODevice::ReadOnly));
+        const QString request = qEnvironmentVariable("NOVELWRITER_LIVE_REFINE_REQUEST");
+        messages = PlanChat::messages(synopsis, QString::fromUtf8(file.readAll()), {}, request);
+        temperature = PlanChat::kTemperature;
+        std::printf("Refining %s: \"%s\"\n", qPrintable(refinePath), qPrintable(request));
+    }
     std::printf("Live plan with %s at %s...\n", qPrintable(model), qPrintable(server));
     QElapsedTimer timer;
     timer.start();
-    ChatCompletion chat(QUrl(server), model, PlanPrompt::messages(synopsis), PlanPrompt::kTemperature);
+    ChatCompletion chat(QUrl(server), model, messages, temperature);
     std::optional<QString> text, error;
     bool truncated = false;
     int thinking = 0;
@@ -216,6 +290,15 @@ void livePlan()
     EXPECT(text.has_value() && !error);
     if (error) {
         std::printf("Error: %s\n", qPrintable(*error));
+    }
+    if (text && !refinePath.isEmpty()) {
+        const PlanChat::Reply reply = PlanChat::parseReply(*text);
+        std::printf("Reply message: %s\nRevised plan: %s%s\n", qPrintable(reply.message),
+                    reply.plan ? "yes" : "no", reply.planCutOff ? " (cut off)" : "");
+        EXPECT(reply.plan.has_value());
+        if (reply.plan) {
+            *text = *reply.plan;
+        }
     }
     if (text) {
         EXPECT(!text->contains("<think>"));
@@ -240,6 +323,7 @@ int main(int argc, char **argv)
     livePlan();
     testStripReasoning();
     testPrompt();
+    testPlanChat();
     testStreaming();
     testReasoningIsHidden();
     testTruncated();

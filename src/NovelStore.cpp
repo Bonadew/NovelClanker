@@ -14,11 +14,13 @@ using Id = NovelStore::Id;
 using Kind = NovelStore::Kind;
 
 constexpr std::string_view kFormatKey = "novel/format";
-constexpr std::string_view kFormatVersion = "2";
+constexpr std::string_view kFormatVersion = "3";
 constexpr std::string_view kNextIdKey = "novel/next_id";
 constexpr std::string_view kActsKey = "novel/acts";
 constexpr std::string_view kSynopsisKey = "novel/synopsis";
-constexpr std::string_view kPlanKey = "novel/plan";
+constexpr std::string_view kPlansKey = "novel/plans";
+constexpr std::string_view kPlanModelKey = "novel/plan_model";
+constexpr std::string_view kLegacyPlanKey = "novel/plan"; // format 2: a single plan
 
 rocksdb::Slice slice(std::string_view s)
 {
@@ -91,6 +93,17 @@ std::string toUtf8(const std::filesystem::path &path)
     return {u8.begin(), u8.end()};
 }
 
+std::string getOptional(rocksdb::DB &db, std::string_view k, std::string_view what)
+{
+    std::string value;
+    const auto status = db.Get({}, slice(k), &value);
+    if (status.IsNotFound()) {
+        return {};
+    }
+    check(status, what);
+    return value;
+}
+
 rocksdb::WriteOptions durableWrites()
 {
     rocksdb::WriteOptions options;
@@ -121,6 +134,7 @@ NovelStore::NovelStore(const std::filesystem::path &dir, Mode mode) : m_path(dir
         batch.Put(slice(kFormatKey), slice(kFormatVersion));
         batch.Put(slice(kNextIdKey), slice(std::to_string(m_nextId)));
         batch.Put(slice(kActsKey), slice(""));
+        batch.Put(slice(kPlansKey), slice(""));
         check(m_db->Write(durableWrites(), &batch), "Cannot initialize novel");
         return;
     }
@@ -141,12 +155,14 @@ NovelStore::NovelStore(const std::filesystem::path &dir, Mode mode) : m_path(dir
         throw StorageError("Not a NovelWriter novel: " + toUtf8(dir));
     }
     check(status, "Cannot read novel");
-    if (format != kFormatVersion) {
+    m_nextId = parseId(get(kNextIdKey));
+    if (format == "2") {
+        upgradeFromFormat2();
+    } else if (format != kFormatVersion) {
         throw StorageError("Unsupported novel format version '" + format + "' (this version reads format " +
                            std::string(kFormatVersion) + ")");
     }
 
-    m_nextId = parseId(get(kNextIdKey));
     for (Id actId : decodeIds(get(kActsKey))) {
         Act act{actId, get(key("act", actId, "title")), {}};
         for (Id chapterId : decodeIds(get(key("act", actId, "chapters")))) {
@@ -158,6 +174,29 @@ NovelStore::NovelStore(const std::filesystem::path &dir, Mode mode) : m_path(dir
         }
         m_acts.push_back(std::move(act));
     }
+    for (Id planId : decodeIds(get(kPlansKey))) {
+        m_plans.push_back({planId, get(key("plan", planId, "title")),
+                           getOptional(*m_db, key("plan", planId, "model"), "Cannot read plan")});
+    }
+}
+
+void NovelStore::upgradeFromFormat2()
+{
+    // Format 2 had at most one plan, in "novel/plan", with no record of how it was made.
+    const std::string legacyPlan = getOptional(*m_db, kLegacyPlanKey, "Cannot read plan");
+    rocksdb::WriteBatch batch;
+    std::string planIds;
+    if (!legacyPlan.empty()) {
+        const Id id = m_nextId++;
+        batch.Put(key("plan", id, "title"), "Plan 1");
+        batch.Put(key("plan", id, "text"), slice(legacyPlan));
+        planIds = std::to_string(id);
+    }
+    batch.Put(slice(kPlansKey), planIds);
+    batch.Put(slice(kNextIdKey), std::to_string(m_nextId));
+    batch.Delete(slice(kLegacyPlanKey));
+    batch.Put(slice(kFormatKey), slice(kFormatVersion));
+    check(m_db->Write(durableWrites(), &batch), "Cannot upgrade novel to the current format");
 }
 
 NovelStore::~NovelStore()
@@ -308,21 +347,6 @@ void NovelStore::setSceneText(Id scene, std::string_view markdown)
     check(m_db->Put(durableWrites(), key("scene", scene, "text"), slice(markdown)), "Cannot save scene");
 }
 
-namespace {
-
-std::string getOptional(rocksdb::DB &db, std::string_view k, std::string_view what)
-{
-    std::string value;
-    const auto status = db.Get({}, slice(k), &value);
-    if (status.IsNotFound()) {
-        return {};
-    }
-    check(status, what);
-    return value;
-}
-
-} // namespace
-
 std::string NovelStore::synopsis() const
 {
     return getOptional(*m_db, kSynopsisKey, "Cannot read synopsis");
@@ -333,14 +357,98 @@ void NovelStore::setSynopsis(std::string_view text)
     check(m_db->Put(durableWrites(), slice(kSynopsisKey), slice(text)), "Cannot save synopsis");
 }
 
-std::string NovelStore::plan() const
+std::string NovelStore::planModelOverride() const
 {
-    return getOptional(*m_db, kPlanKey, "Cannot read plan");
+    return getOptional(*m_db, kPlanModelKey, "Cannot read the plan model");
 }
 
-void NovelStore::setPlan(std::string_view markdown)
+void NovelStore::setPlanModelOverride(std::string_view model)
 {
-    check(m_db->Put(durableWrites(), slice(kPlanKey), slice(markdown)), "Cannot save plan");
+    const auto status = model.empty() ? m_db->Delete(durableWrites(), slice(kPlanModelKey))
+                                      : m_db->Put(durableWrites(), slice(kPlanModelKey), slice(model));
+    check(status, "Cannot save the plan model");
+}
+
+std::size_t NovelStore::requirePlan(Id plan) const
+{
+    for (std::size_t i = 0; i < m_plans.size(); ++i) {
+        if (m_plans[i].id == plan) {
+            return i;
+        }
+    }
+    throw std::invalid_argument("NovelStore: unknown plan id: " + std::to_string(plan));
+}
+
+NovelStore::Id NovelStore::addPlan(std::string_view title, std::string_view markdown, std::string_view model)
+{
+    const Id id = m_nextId;
+    std::vector<Plan> plans = m_plans;
+    plans.push_back({id, std::string(title), std::string(model)});
+
+    rocksdb::WriteBatch batch;
+    batch.Put(key("plan", id, "title"), slice(title));
+    batch.Put(key("plan", id, "text"), slice(markdown));
+    if (!model.empty()) {
+        batch.Put(key("plan", id, "model"), slice(model));
+    }
+    batch.Put(slice(kPlansKey), encodeIds(plans));
+    batch.Put(slice(kNextIdKey), std::to_string(id + 1));
+    check(m_db->Write(durableWrites(), &batch), "Cannot add plan");
+
+    m_plans = std::move(plans);
+    m_nextId = id + 1;
+    return id;
+}
+
+void NovelStore::renamePlan(Id plan, std::string_view title)
+{
+    const std::size_t index = requirePlan(plan);
+    check(m_db->Put(durableWrites(), key("plan", plan, "title"), slice(title)), "Cannot rename plan");
+    m_plans[index].title = title;
+}
+
+std::string NovelStore::planText(Id plan) const
+{
+    requirePlan(plan);
+    std::string text;
+    check(m_db->Get({}, key("plan", plan, "text"), &text), "Cannot read plan");
+    return text;
+}
+
+void NovelStore::setPlanText(Id plan, std::string_view markdown)
+{
+    requirePlan(plan);
+    check(m_db->Put(durableWrites(), key("plan", plan, "text"), slice(markdown)), "Cannot save plan");
+}
+
+std::string NovelStore::planChat(Id plan) const
+{
+    requirePlan(plan);
+    return getOptional(*m_db, key("plan", plan, "chat"), "Cannot read the plan chat");
+}
+
+void NovelStore::setPlanChat(Id plan, std::string_view chat)
+{
+    requirePlan(plan);
+    const std::string k = key("plan", plan, "chat");
+    const auto status = chat.empty() ? m_db->Delete(durableWrites(), k) : m_db->Put(durableWrites(), k, slice(chat));
+    check(status, "Cannot save the plan chat");
+}
+
+void NovelStore::removePlan(Id plan)
+{
+    const std::size_t index = requirePlan(plan);
+    std::vector<Plan> plans = m_plans;
+    plans.erase(plans.begin() + static_cast<std::ptrdiff_t>(index));
+
+    rocksdb::WriteBatch batch;
+    batch.Delete(key("plan", plan, "title"));
+    batch.Delete(key("plan", plan, "text"));
+    batch.Delete(key("plan", plan, "model"));
+    batch.Delete(key("plan", plan, "chat"));
+    batch.Put(slice(kPlansKey), encodeIds(plans));
+    check(m_db->Write(durableWrites(), &batch), "Cannot delete plan");
+    m_plans = std::move(plans);
 }
 
 void NovelStore::remove(Id id)

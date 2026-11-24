@@ -1,5 +1,7 @@
 #include "SettingsDialog.h"
 
+#include "ModelCombo.h"
+
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -18,9 +20,7 @@ namespace {
 QComboBox *makeModelCombo(QWidget *parent)
 {
     auto *combo = new QComboBox(parent);
-    combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    combo->setMinimumContentsLength(40);
-    combo->setPlaceholderText(QObject::tr("Select a model"));
+    ModelCombo::setUp(combo);
     return combo;
 }
 
@@ -68,8 +68,8 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent), m_client(new 
     m_proseCombo = makeModelCombo(this);
     m_plannerCombo->setObjectName("plannerCombo");
     m_proseCombo->setObjectName("proseCombo");
-    populate(m_plannerCombo, {}, settings.plannerModel, true);
-    populate(m_proseCombo, {}, settings.proseModel, true);
+    ModelCombo::populate(m_plannerCombo, {}, settings.plannerModel, false);
+    ModelCombo::populate(m_proseCombo, {}, settings.proseModel, false);
 
     auto *modelBox = new QGroupBox(tr("Models"), this);
     auto *modelForm = new QFormLayout(modelBox);
@@ -124,42 +124,13 @@ void SettingsDialog::onModelsFetched(const QList<LmModel> &models)
     m_statusLabel->setText(models.isEmpty() ? tr("Connected, but the server has no models. Download one in LM Studio.")
                                             : tr("Connected: %n model(s) available", nullptr, int(models.size())) +
                                                   (loaded ? tr(", %n loaded.", nullptr, loaded) : QStringLiteral(".")));
-    populate(m_plannerCombo, models, selectedModel(m_plannerCombo), false);
-    populate(m_proseCombo, models, selectedModel(m_proseCombo), false);
+    ModelCombo::populate(m_plannerCombo, models, ModelCombo::selectedId(m_plannerCombo), true);
+    ModelCombo::populate(m_proseCombo, models, ModelCombo::selectedId(m_proseCombo), true);
 }
 
 void SettingsDialog::onFetchFailed(const QString &error)
 {
     m_statusLabel->setText(tr("Could not get models: %1\nIs LM Studio running with its server started?").arg(error));
-}
-
-void SettingsDialog::populate(QComboBox *combo, const QList<LmModel> &models, const QString &selected,
-                              bool initial)
-{
-    combo->clear();
-    bool found = false;
-    for (const LmModel &model : models) {
-        QString text = model.displayName;
-        if (!model.details.isEmpty()) {
-            text += QStringLiteral("  (%1)").arg(model.details);
-        }
-        if (model.loaded) {
-            text += tr("  · loaded");
-        }
-        combo->addItem(text, model.id);
-        combo->setItemData(combo->count() - 1, model.id, Qt::ToolTipRole);
-        found = found || model.id == selected;
-    }
-    if (!selected.isEmpty() && !found) {
-        // Keep the saved choice rather than silently dropping it (e.g. while the server is unreachable).
-        combo->insertItem(0, initial ? selected : tr("%1  (not on this server)").arg(selected), selected);
-    }
-    combo->setCurrentIndex(selected.isEmpty() ? -1 : combo->findData(selected));
-}
-
-QString SettingsDialog::selectedModel(const QComboBox *combo)
-{
-    return combo->currentIndex() >= 0 ? combo->currentData().toString() : QString();
 }
 
 void SettingsDialog::accept()
@@ -174,8 +145,8 @@ void SettingsDialog::accept()
     }
     AiSettings settings;
     settings.serverUrl = url.toString();
-    settings.plannerModel = selectedModel(m_plannerCombo);
-    settings.proseModel = selectedModel(m_proseCombo);
+    settings.plannerModel = ModelCombo::selectedId(m_plannerCombo);
+    settings.proseModel = ModelCombo::selectedId(m_proseCombo);
     settings.save();
     QDialog::accept();
 }

@@ -25,10 +25,6 @@ class SettingsDialog : public QDialog
     void refreshModels();
     void onModelsFetched(const QList<LmModel> &models);
     void onFetchFailed(const QString &error);
-    // Fills a model dropdown, keeping `selected` (a model id) selected even if the server doesn't list it.
-    // `initial` is true before anything was fetched, so a missing model isn't flagged as unavailable yet.
-    static void populate(QComboBox *combo, const QList<LmModel> &models, const QString &selected, bool initial);
-    static QString selectedModel(const QComboBox *combo);
 
     LmStudioClient *m_client = nullptr;
     QLineEdit *m_serverEdit = nullptr;

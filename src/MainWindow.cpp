@@ -4,15 +4,21 @@
 #include "LmChat.h"
 #include "LmStudioClient.h"
 #include "MarkdownHighlighter.h"
+#include "ModelCombo.h"
 #include "NovelTree.h"
+#include "PlanChat.h"
+#include "PlanChatPanel.h"
 #include "PlanPrompt.h"
 #include "SettingsDialog.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QSet>
 #include <QTabWidget>
+#include <QTextCursor>
 #include <QCloseEvent>
 #include <QDir>
 #include <QFileDialog>
@@ -30,6 +36,9 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QTreeWidgetItemIterator>
+
+#include <algorithm>
+#include <utility>
 #include <QVBoxLayout>
 
 namespace {
@@ -256,11 +265,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     editMenu->addAction(tr("&Copy"), QKeySequence::Copy, this, onEditor(&QPlainTextEdit::copy));
     editMenu->addAction(tr("&Paste"), QKeySequence::Paste, this, onEditor(&QPlainTextEdit::paste));
     editMenu->addSeparator();
-    QAction *settingsAction = editMenu->addAction(tr("&Settings..."), QKeySequence::Preferences, this, [this] {
-        SettingsDialog dialog(this);
-        dialog.exec();
-        updatePlannerStatus();
-    });
+    QAction *settingsAction =
+        editMenu->addAction(tr("&Settings..."), QKeySequence::Preferences, this, &MainWindow::openSettings);
     settingsAction->setMenuRole(QAction::PreferencesRole); // macOS: app menu "Settings..."
 
     QMenu *structureMenu = menuBar()->addMenu(tr("&Structure"));
@@ -310,6 +316,7 @@ bool MainWindow::openNovel(const QString &dir, NovelStore::Mode mode)
         return true; // already open (RocksDB would refuse a second lock anyway)
     }
     stopPlanGeneration();
+    m_chat->stop();
     saveAll();
 
     std::unique_ptr<NovelStore> store;
@@ -354,10 +361,8 @@ bool MainWindow::openNovel(const QString &dir, NovelStore::Mode mode)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    if (m_planRequest) {
-        m_planRequest->abort(); // the unfinished plan is discarded; the previous plan stays saved
-        m_planRequest->deleteLater();
-    }
+    stopPlanGeneration(); // like Stop: keeps what was written so far
+    m_chat->stop();       // an unfinished chat answer changes nothing
     if (saveAll() ||
         QMessageBox::question(this, tr("NovelWriter"), tr("Some changes could not be saved. Quit anyway?")) ==
             QMessageBox::Yes) {
@@ -746,9 +751,26 @@ QWidget *MainWindow::buildSynopsisView()
     m_generateButton->setObjectName("generatePlanButton");
     m_generateButton->setToolTip(tr("Use the planner model to create a plan for the novel from this synopsis"));
 
-    auto *bottom = new QHBoxLayout;
-    bottom->addWidget(m_synopsisStatus, 1);
-    bottom->addWidget(m_generateButton);
+    m_planModelCombo = new QComboBox(view);
+    m_planModelCombo->setObjectName("planModelCombo");
+    ModelCombo::setUp(m_planModelCombo);
+    m_planModelCombo->setToolTip(tr("Model used by Generate Plan for this novel. \"Settings default\" uses the "
+                                    "planner model from Edit > Settings."));
+    m_refreshModelsButton = new QPushButton(tr("Refresh"), view);
+    m_refreshModelsButton->setObjectName("refreshPlanModelsButton");
+    m_refreshModelsButton->setToolTip(tr("Fetch the models from the LM Studio server again"));
+    m_modelClient = new LmStudioClient(this);
+
+    auto *modelRow = new QHBoxLayout;
+    modelRow->addWidget(new QLabel(tr("Planner model:"), view));
+    modelRow->addWidget(m_planModelCombo, 1);
+    modelRow->addWidget(m_refreshModelsButton);
+    modelRow->addSpacing(12);
+    modelRow->addWidget(m_generateButton);
+
+    auto *bottom = new QVBoxLayout;
+    bottom->addLayout(modelRow);
+    bottom->addWidget(m_synopsisStatus);
 
     auto *layout = new QVBoxLayout(view);
     layout->addWidget(hint);
@@ -764,12 +786,52 @@ QWidget *MainWindow::buildSynopsisView()
     });
     connect(m_synopsisTimer, &QTimer::timeout, this, &MainWindow::saveSynopsis);
     connect(m_generateButton, &QPushButton::clicked, this, &MainWindow::generatePlan);
+    connect(m_refreshModelsButton, &QPushButton::clicked, this, &MainWindow::refreshPlanModels);
+    connect(m_planModelCombo, &QComboBox::currentIndexChanged, this, &MainWindow::onPlanModelChosen);
+    connect(m_modelClient, &LmStudioClient::modelsFetched, this, [this](const QList<LmModel> &models) {
+        m_serverModels = models;
+        m_modelsFetched = true;
+        m_modelsError.clear();
+        populatePlanModelCombo();
+    });
+    connect(m_modelClient, &LmStudioClient::fetchFailed, this, [this](const QString &error) {
+        m_modelsError = error;
+        updatePlannerStatus();
+    });
     return view;
 }
 
 QWidget *MainWindow::buildPlanView()
 {
     auto *view = new QWidget(this);
+
+    // --- Left: the novel's plans ------------------------------------------------------------------------
+    m_planList = new QTreeWidget(view);
+    m_planList->setObjectName("planList");
+    m_planList->setColumnCount(2);
+    m_planList->setHeaderLabels({tr("Plan"), tr("Generated with")});
+    m_planList->setRootIsDecorated(false);
+    m_planList->setEditTriggers(QAbstractItemView::NoEditTriggers); // titles are renamed by double-click
+    m_planList->setToolTip(tr("Double-click a plan's name to rename it"));
+    m_newPlanButton = new QPushButton(tr("+ New Plan"), view);
+    m_newPlanButton->setObjectName("newPlanButton");
+    m_newPlanButton->setToolTip(tr("Add an empty plan to write by hand"));
+    m_deletePlanButton = new QPushButton(tr("Delete"), view);
+    m_deletePlanButton->setObjectName("deletePlanButton");
+
+    auto *listButtons = new QHBoxLayout;
+    listButtons->addWidget(m_newPlanButton);
+    listButtons->addWidget(m_deletePlanButton);
+    listButtons->addStretch();
+    auto *left = new QWidget(view);
+    auto *leftLayout = new QVBoxLayout(left);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    leftLayout->addLayout(listButtons);
+    leftLayout->addWidget(m_planList, 1);
+
+    // --- Right: the selected plan ---------------------------------------------------------------------
+    m_planOrigin = new QLabel(view);
+    m_planOrigin->setObjectName("planOrigin");
     m_planStatus = new QLabel(view);
     m_planStatus->setObjectName("planStatus");
     m_planStatus->setWordWrap(true);
@@ -779,6 +841,7 @@ QWidget *MainWindow::buildPlanView()
     m_stopButton->hide();
 
     auto *top = new QHBoxLayout;
+    top->addWidget(m_planOrigin);
     top->addWidget(m_planStatus, 1);
     top->addWidget(m_stopButton);
 
@@ -787,16 +850,33 @@ QWidget *MainWindow::buildPlanView()
     new MarkdownHighlighter(m_planEdit->document());
     m_planTimer = makeAutosaveTimer(this);
 
+    auto *planPane = new QWidget(view);
+    auto *planLayout = new QVBoxLayout(planPane);
+    planLayout->setContentsMargins(0, 0, 0, 0);
+    planLayout->addLayout(top);
+    planLayout->addWidget(m_planEdit, 1);
+
+    m_chat = new PlanChatPanel(view);
+    auto *right = new QSplitter(Qt::Vertical, view);
+    right->addWidget(planPane);
+    right->addWidget(m_chat);
+    right->setStretchFactor(0, 3);
+    right->setStretchFactor(1, 2);
+
+    auto *splitter = new QSplitter(view);
+    splitter->addWidget(left);
+    splitter->addWidget(right);
+    splitter->setStretchFactor(1, 1);
+    splitter->setSizes({300, 800});
+    auto *layout = new QVBoxLayout(view);
+    layout->addWidget(splitter);
+
     m_planRefresh = new QTimer(this);
     m_planRefresh->setSingleShot(true);
     m_planRefresh->setInterval(100);
 
-    auto *layout = new QVBoxLayout(view);
-    layout->addLayout(top);
-    layout->addWidget(m_planEdit, 1);
-
     connect(m_planEdit, &QPlainTextEdit::textChanged, this, [this] {
-        if (!m_loading && !m_planRequest) {
+        if (!m_loading && m_currentPlan && m_currentPlan != m_generatingPlan) {
             m_planDirty = true;
             m_planTimer->start();
         }
@@ -804,34 +884,49 @@ QWidget *MainWindow::buildPlanView()
     connect(m_planTimer, &QTimer::timeout, this, &MainWindow::savePlan);
     connect(m_planRefresh, &QTimer::timeout, this, [this] { showPlanText(m_pendingPlanText); });
     connect(m_stopButton, &QPushButton::clicked, this, &MainWindow::stopPlanGeneration);
+    connect(m_planList, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *item) { showPlan(item); });
+    connect(m_planList, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int column) {
+        if (column == 0 && !m_planRequest) {
+            m_planList->editItem(item, 0);
+        }
+    });
+    connect(m_planList, &QTreeWidget::itemChanged, this, &MainWindow::onPlanRenamed);
+    connect(m_newPlanButton, &QPushButton::clicked, this, &MainWindow::newPlan);
+    connect(m_deletePlanButton, &QPushButton::clicked, this, &MainWindow::deletePlan);
+    connect(m_chat, &PlanChatPanel::submitted, this, &MainWindow::sendChatMessage);
+    connect(m_chat, &PlanChatPanel::replied, this, &MainWindow::onChatReply);
+    connect(m_chat, &PlanChatPanel::busyChanged, this, [this](bool busy) { lockPlanEditing(busy); });
+    connect(m_chat, &PlanChatPanel::clearRequested, this, &MainWindow::clearChat);
     return view;
 }
 
 void MainWindow::loadSynopsisAndPlan()
 {
-    QString synopsis, plan;
+    QString synopsis;
     if (m_store) {
-        attempt(tr("Could not load the synopsis and plan."), [&] {
-            synopsis = QString::fromStdString(m_store->synopsis());
-            plan = QString::fromStdString(m_store->plan());
-        });
+        attempt(tr("Could not load the synopsis."), [&] { synopsis = QString::fromStdString(m_store->synopsis()); });
     }
     m_synopsisTimer->stop();
-    m_planTimer->stop();
     m_loading = true;
     m_synopsisEdit->setPlainText(synopsis);
-    m_planEdit->setPlainText(plan);
     m_loading = false;
     m_synopsisDirty = false;
-    m_planDirty = false;
 
     m_synopsisEdit->setEnabled(m_store != nullptr);
-    m_planEdit->setEnabled(m_store != nullptr);
     m_synopsisEdit->setPlaceholderText(m_store ? tr("Once upon a time...")
                                                : tr("Create or open a novel from the File menu first."));
     m_planStatus->clear();
-    m_tabs->setTabVisible(m_tabs->indexOf(m_planView), !plan.isEmpty());
-    updatePlannerStatus();
+    m_currentPlan.reset();
+    std::optional<Id> first;
+    if (m_store && !m_store->plans().empty()) {
+        first = m_store->plans().front().id;
+    }
+    refreshPlanList(first);
+    m_tabs->setTabVisible(m_tabs->indexOf(m_planView), m_store != nullptr);
+    populatePlanModelCombo();
+    if (m_store) {
+        refreshPlanModels();
+    }
 }
 
 bool MainWindow::saveSynopsis()
@@ -851,10 +946,12 @@ bool MainWindow::saveSynopsis()
 bool MainWindow::savePlan()
 {
     m_planTimer->stop();
-    if (!m_store || m_planRequest || !m_planDirty) {
-        return true; // a plan being generated is saved when it is complete
+    if (!m_store || !m_currentPlan || !m_planDirty || m_currentPlan == m_generatingPlan) {
+        return true; // a plan being generated is saved when generation ends
     }
-    if (!attempt(tr("Could not save the plan."), [&] { m_store->setPlan(editorText(m_planEdit).toStdString()); })) {
+    const Id plan = *m_currentPlan;
+    if (!attempt(tr("Could not save the plan."),
+                 [&] { m_store->setPlanText(plan, editorText(m_planEdit).toStdString()); })) {
         return false;
     }
     m_planDirty = false;
@@ -869,9 +966,163 @@ bool MainWindow::saveAll()
     return scene && synopsis && plan;
 }
 
+void MainWindow::refreshPlanList(std::optional<Id> select)
+{
+    m_loading = true;
+    m_planList->clear();
+    QTreeWidgetItem *selected = nullptr;
+    if (m_store) {
+        for (const auto &plan : m_store->plans()) {
+            auto *item = new QTreeWidgetItem(m_planList);
+            item->setText(0, QString::fromStdString(plan.title));
+            item->setText(1, plan.model.empty() ? tr("(by hand)") : QString::fromStdString(plan.model));
+            item->setToolTip(1, item->text(1));
+            item->setData(0, kIdRole, QVariant::fromValue<qulonglong>(plan.id));
+            item->setFlags(item->flags() | Qt::ItemIsEditable);
+            if (select && *select == plan.id) {
+                selected = item;
+            }
+        }
+    }
+    m_planList->resizeColumnToContents(0);
+    m_loading = false;
+
+    m_currentPlan.reset(); // the previous plan was saved before the list changed
+    if (selected) {
+        m_planList->setCurrentItem(selected); // triggers showPlan
+    } else {
+        showPlan(nullptr);
+    }
+}
+
+void MainWindow::showPlan(QTreeWidgetItem *item)
+{
+    if (m_loading) {
+        return;
+    }
+    savePlan();
+    m_planTimer->stop();
+
+    QString text;
+    std::optional<Id> plan = optionalItemId(item);
+    if (plan && !attempt(tr("Could not load the plan."),
+                         [&] { text = QString::fromStdString(m_store->planText(*plan)); })) {
+        plan.reset();
+    }
+    m_loading = true;
+    m_planEdit->setPlainText(text);
+    m_loading = false;
+    m_planDirty = false;
+    m_currentPlan = plan;
+
+    m_planEdit->setEnabled(plan.has_value());
+    m_planEdit->setPlaceholderText(m_store ? tr("No plan selected. Generate one from the Synopsis tab, or use "
+                                                "+ New Plan to write one by hand.")
+                                           : QString());
+    QString origin;
+    if (plan) {
+        const auto &plans = m_store->plans();
+        const auto it = std::find_if(plans.begin(), plans.end(), [&](const auto &p) { return p.id == *plan; });
+        if (it != plans.end()) {
+            origin = it->model.empty() ? tr("Written by hand.")
+                                       : tr("Generated with %1.").arg(QString::fromStdString(it->model));
+        }
+    }
+    m_planOrigin->setText(origin);
+    m_deletePlanButton->setEnabled(plan.has_value() && !m_planRequest);
+
+    QList<PlanChat::Turn> history;
+    if (plan) {
+        attempt(tr("Could not load the plan's conversation."),
+                [&] { history = PlanChat::parse(QString::fromStdString(m_store->planChat(*plan))); });
+    }
+    m_chat->setHistory(history);
+    updateChatState();
+}
+
+QString MainWindow::nextPlanTitle() const
+{
+    QSet<QString> used;
+    for (const auto &plan : m_store->plans()) {
+        used.insert(QString::fromStdString(plan.title));
+    }
+    for (int n = static_cast<int>(m_store->plans().size()) + 1;; ++n) {
+        const QString title = tr("Plan %1").arg(n);
+        if (!used.contains(title)) {
+            return title;
+        }
+    }
+}
+
+void MainWindow::newPlan()
+{
+    if (!m_store || m_planRequest || !savePlan()) {
+        return;
+    }
+    Id id = 0;
+    if (!attempt(tr("Could not add a plan."), [&] { id = m_store->addPlan(nextPlanTitle().toStdString(), ""); })) {
+        return;
+    }
+    refreshPlanList(id);
+    m_planEdit->setFocus();
+}
+
+void MainWindow::deletePlan()
+{
+    QTreeWidgetItem *item = m_planList->currentItem();
+    if (!m_store || !item || m_planRequest) {
+        return;
+    }
+    QMessageBox box(QMessageBox::Warning, tr("Delete Plan"),
+                    tr("Delete the plan \"%1\"?\n\nThis cannot be undone.").arg(item->text(0)), QMessageBox::Cancel,
+                    this);
+    QPushButton *deleteButton = box.addButton(tr("Delete"), QMessageBox::DestructiveRole);
+    box.setDefaultButton(QMessageBox::Cancel);
+    box.exec();
+    if (box.clickedButton() != deleteButton) {
+        return;
+    }
+    const int index = m_planList->indexOfTopLevelItem(item);
+    QTreeWidgetItem *neighbour = m_planList->topLevelItem(index > 0 ? index - 1 : index + 1);
+    const std::optional<Id> select = optionalItemId(neighbour);
+    const Id id = itemId(item);
+    m_planTimer->stop();
+    m_currentPlan.reset(); // drop unsaved edits of the plan being deleted
+    attempt(tr("Could not delete the plan."), [&] { m_store->removePlan(id); });
+    refreshPlanList(select);
+}
+
+void MainWindow::onPlanRenamed(QTreeWidgetItem *item, int column)
+{
+    if (m_loading || !m_store || column != 0) {
+        return;
+    }
+    const Id id = itemId(item);
+    const QString title = item->text(0).trimmed();
+    QString stored;
+    for (const auto &plan : m_store->plans()) {
+        if (plan.id == id) {
+            stored = QString::fromStdString(plan.title);
+        }
+    }
+    if (title == stored) {
+        return;
+    }
+    if (title.isEmpty() || !attempt(tr("Could not rename the plan."),
+                                    [&] { m_store->renamePlan(id, title.toStdString()); })) {
+        m_loading = true;
+        item->setText(0, stored);
+        m_loading = false;
+    } else if (title != item->text(0)) {
+        m_loading = true;
+        item->setText(0, title);
+        m_loading = false;
+    }
+}
+
 void MainWindow::generatePlan()
 {
-    if (!m_store || m_planRequest || !saveSynopsis()) {
+    if (!m_store || m_planRequest || !saveSynopsis() || !savePlan()) {
         return;
     }
     const QString synopsis = editorText(m_synopsisEdit);
@@ -881,30 +1132,29 @@ void MainWindow::generatePlan()
     }
     const AiSettings settings = AiSettings::load();
     const QUrl server = normalizeServerUrl(settings.serverUrl);
-    if (settings.plannerModel.isEmpty() || !server.isValid()) {
+    const QString model = effectivePlanModel();
+    if (model.isEmpty() || !server.isValid()) {
         QMessageBox box(QMessageBox::Information, tr("Generate Plan"),
-                        tr("Choose an LM Studio server and a planner model in Settings first."), QMessageBox::Cancel,
-                        this);
+                        tr("Choose a planner model (here or in Settings) and an LM Studio server in Settings first."),
+                        QMessageBox::Cancel, this);
         QPushButton *open = box.addButton(tr("Open Settings..."), QMessageBox::AcceptRole);
         box.exec();
         if (box.clickedButton() == open) {
-            SettingsDialog dialog(this);
-            dialog.exec();
-            updatePlannerStatus();
+            openSettings();
         }
         return;
     }
-    if (!editorText(m_planEdit).trimmed().isEmpty() &&
-        QMessageBox::question(this, tr("Generate Plan"),
-                              tr("Replace the current plan with a newly generated one?")) != QMessageBox::Yes) {
-        return;
-    }
-    if (!savePlan()) {
-        return;
-    }
 
-    m_planBeforeGeneration = editorText(m_planEdit);
-    m_planModel = settings.plannerModel;
+    // Every generation makes a new plan that remembers the model; existing plans are never replaced.
+    m_planModel = model;
+    Id id = 0;
+    if (!attempt(tr("Could not add a plan."), [&] {
+            id = m_store->addPlan(nextPlanTitle().toStdString(), "", m_planModel.toStdString());
+        })) {
+        return;
+    }
+    m_planBeforeGeneration = m_currentPlan;
+    m_generatingPlan = id;
     m_planRequest = new ChatCompletion(server, m_planModel, PlanPrompt::messages(synopsis), PlanPrompt::kTemperature,
                                        this);
     connect(m_planRequest, &ChatCompletion::textChanged, this, [this](const QString &text) {
@@ -922,11 +1172,10 @@ void MainWindow::generatePlan()
     connect(m_planRequest, &ChatCompletion::failed, this, &MainWindow::onPlanFailed);
 
     m_pendingPlanText.clear();
-    showPlanText({});
+    refreshPlanList(id);
     setPlanGenerating(true);
     m_planStatus->setText(
-        tr("Generating the plan with %1... (LM Studio may need a moment to load the model)").arg(m_planModel));
-    m_tabs->setTabVisible(m_tabs->indexOf(m_planView), true);
+        tr("Generating with %1... (LM Studio may need a moment to load the model)").arg(m_planModel));
     m_tabs->setCurrentWidget(m_planView);
     m_planRequest->start();
 }
@@ -940,8 +1189,7 @@ void MainWindow::showPlanText(const QString &text)
         m_planEdit->moveCursor(QTextCursor::End); // follow the text as it is written
         m_planEdit->ensureCursorVisible();
         if (!text.isEmpty()) {
-            m_planStatus->setText(tr("Writing the plan with %1... %n word(s) so far", nullptr,
-                                     int(countWords(text)))
+            m_planStatus->setText(tr("Writing with %1... %n word(s) so far", nullptr, int(countWords(text)))
                                       .arg(m_planModel));
         }
     }
@@ -949,10 +1197,45 @@ void MainWindow::showPlanText(const QString &text)
 
 void MainWindow::setPlanGenerating(bool generating)
 {
-    m_planEdit->setReadOnly(generating);
     m_stopButton->setVisible(generating);
-    m_generateButton->setEnabled(!generating && m_store != nullptr);
+    lockPlanEditing(generating);
+}
+
+void MainWindow::lockPlanEditing(bool locked)
+{
+    // While a model is writing (a new plan, or an answer that may revise the plan), keep the plan on screen
+    // and unchanged so the model's text can't clash with edits.
+    m_planEdit->setReadOnly(locked);
+    m_planList->setEnabled(!locked);
+    m_newPlanButton->setEnabled(!locked);
+    m_deletePlanButton->setEnabled(!locked && m_currentPlan.has_value());
+    m_generateButton->setEnabled(!locked && m_store != nullptr);
     updatePlannerStatus();
+}
+
+// Ends a generation: keeps the generated plan if it has text (saving it), otherwise removes it again and
+// re-selects the plan shown before. The caller sets the status message.
+void MainWindow::finishGeneratedPlan()
+{
+    if (m_planRequest) {
+        m_planRequest->deleteLater();
+        m_planRequest = nullptr;
+    }
+    m_planRefresh->stop();
+    const std::optional<Id> plan = std::exchange(m_generatingPlan, std::nullopt);
+    setPlanGenerating(false);
+    if (!plan) {
+        return;
+    }
+    if (m_pendingPlanText.trimmed().isEmpty()) {
+        attempt(tr("Could not remove the empty plan."), [&] { m_store->removePlan(*plan); });
+        refreshPlanList(m_planBeforeGeneration);
+        return;
+    }
+    showPlanText(m_pendingPlanText);
+    m_planDirty = true;
+    savePlan();
+    m_planEdit->moveCursor(QTextCursor::Start);
 }
 
 void MainWindow::stopPlanGeneration()
@@ -961,41 +1244,17 @@ void MainWindow::stopPlanGeneration()
         return;
     }
     m_planRequest->abort();
-    m_planRequest->deleteLater();
-    m_planRequest = nullptr;
-    m_planRefresh->stop();
-    setPlanGenerating(false);
-
-    if (m_pendingPlanText.trimmed().isEmpty()) {
-        showPlanText(m_planBeforeGeneration); // nothing written yet: keep the previous plan
-        m_planStatus->setText(tr("Stopped. The previous plan was kept."));
-        return;
-    }
-    // Keep the partial plan; the user asked for it to stop and may want to continue by hand.
-    showPlanText(m_pendingPlanText);
-    m_planDirty = true;
-    savePlan();
-    m_planStatus->setText(tr("Stopped. The plan is incomplete."));
+    const bool kept = !m_pendingPlanText.trimmed().isEmpty();
+    finishGeneratedPlan(); // keeps the partial plan; the user may want to continue it by hand
+    m_planStatus->setText(kept ? tr("Stopped. The plan is incomplete.") : tr("Stopped before anything was written."));
 }
 
 void MainWindow::onPlanFinished(const QString &plan, bool truncated)
 {
-    m_planRequest->deleteLater();
-    m_planRequest = nullptr;
-    m_planRefresh->stop();
-    setPlanGenerating(false);
-    if (plan.trimmed().isEmpty()) {
-        // Nothing usable: keep the previous plan rather than replacing it with nothing.
-        showPlanText(m_planBeforeGeneration);
-        m_planDirty = false;
-    } else {
-        showPlanText(plan);
-        m_planDirty = true;
-        savePlan();
-    }
-    m_planEdit->moveCursor(QTextCursor::Start);
+    m_pendingPlanText = plan;
+    finishGeneratedPlan();
 
-    QString status = tr("Plan generated with %1. You can edit it here.").arg(m_planModel);
+    QString status = tr("Done. You can edit the plan here.");
     if (plan.trimmed().isEmpty() && truncated) {
         // Typical for reasoning models: all tokens went into thinking.
         status = tr("%1 reached its length limit before writing anything (it probably spent it all on "
@@ -1013,16 +1272,72 @@ void MainWindow::onPlanFinished(const QString &plan, bool truncated)
 
 void MainWindow::onPlanFailed(const QString &error)
 {
-    m_planRequest->deleteLater();
-    m_planRequest = nullptr;
-    m_planRefresh->stop();
-    setPlanGenerating(false);
-    showPlanText(m_planBeforeGeneration);
-    m_planDirty = false;
-    m_tabs->setTabVisible(m_tabs->indexOf(m_planView), !m_planBeforeGeneration.isEmpty());
+    m_pendingPlanText.clear(); // discard any partial text: the generation went wrong
+    finishGeneratedPlan();
     m_planStatus->setText(tr("Plan generation failed."));
     QMessageBox::warning(this, tr("Generate Plan"),
                          tr("Could not generate the plan with %1:\n\n%2").arg(m_planModel, error));
+}
+
+void MainWindow::openSettings()
+{
+    SettingsDialog dialog(this);
+    dialog.exec();
+    populatePlanModelCombo(); // the default model may have changed
+    if (m_store) {
+        refreshPlanModels(); // and so may the server
+    }
+}
+
+void MainWindow::refreshPlanModels()
+{
+    const QUrl server = normalizeServerUrl(AiSettings::load().serverUrl);
+    if (!server.isValid()) {
+        m_modelsError = tr("the server address in Settings is not valid");
+        updatePlannerStatus();
+        return;
+    }
+    m_modelClient->fetchModels(server);
+}
+
+void MainWindow::populatePlanModelCombo()
+{
+    QString chosen;
+    if (m_store) {
+        attempt(tr("Could not read the plan model."),
+                [&] { chosen = QString::fromStdString(m_store->planModelOverride()); });
+    }
+    const QString defaultModel = AiSettings::load().plannerModel;
+    m_loading = true;
+    ModelCombo::populate(m_planModelCombo, m_serverModels, chosen, m_modelsFetched);
+    // First entry: no override, use the planner model from Settings.
+    m_planModelCombo->insertItem(0,
+                                 defaultModel.isEmpty() ? tr("Settings default (none chosen)")
+                                                        : tr("Settings default (%1)").arg(defaultModel),
+                                 QString());
+    if (chosen.isEmpty()) {
+        m_planModelCombo->setCurrentIndex(0);
+    }
+    m_planModelCombo->setEnabled(m_store != nullptr);
+    m_refreshModelsButton->setEnabled(m_store != nullptr);
+    m_loading = false;
+    updatePlannerStatus();
+}
+
+void MainWindow::onPlanModelChosen()
+{
+    if (m_loading || !m_store) {
+        return;
+    }
+    const QString model = ModelCombo::selectedId(m_planModelCombo);
+    attempt(tr("Could not save the plan model."), [&] { m_store->setPlanModelOverride(model.toStdString()); });
+    updatePlannerStatus();
+}
+
+QString MainWindow::effectivePlanModel() const
+{
+    const QString chosen = ModelCombo::selectedId(m_planModelCombo);
+    return chosen.isEmpty() ? AiSettings::load().plannerModel : chosen;
 }
 
 void MainWindow::updatePlannerStatus()
@@ -1032,10 +1347,161 @@ void MainWindow::updatePlannerStatus()
         m_synopsisStatus->setText(tr("Generating the plan with %1...").arg(m_planModel));
         return;
     }
-    const QString model = AiSettings::load().plannerModel;
-    m_synopsisStatus->setText(model.isEmpty()
-                                  ? tr("No planner model chosen yet: set one in Edit > Settings.")
-                                  : tr("Planner model: %1").arg(model));
+    QString status;
+    const QString model = effectivePlanModel();
+    if (model.isEmpty()) {
+        status = tr("No planner model chosen yet: choose one here or in Edit > Settings.");
+    } else if (ModelCombo::selectedId(m_planModelCombo).isEmpty()) {
+        status = tr("Plans are generated with %1 (from Settings).").arg(model);
+    } else {
+        status = tr("Plans for this novel are generated with %1.").arg(model);
+    }
+    if (m_store && !m_modelsError.isEmpty()) {
+        status += "\n" + tr("Could not list the server's models: %1").arg(m_modelsError);
+    }
+    m_synopsisStatus->setText(status);
+    updateChatState();
+}
+
+QString MainWindow::chatModel() const
+{
+    if (m_store && m_currentPlan) {
+        for (const auto &plan : m_store->plans()) {
+            if (plan.id == *m_currentPlan && !plan.model.empty()) {
+                return QString::fromStdString(plan.model);
+            }
+        }
+    }
+    return effectivePlanModel(); // hand-written plans: this novel's planner model
+}
+
+void MainWindow::updateChatState()
+{
+    if (!m_chat || m_chat->isBusy()) {
+        return;
+    }
+    const QString model = chatModel();
+    bool generated = false;
+    if (m_store && m_currentPlan) {
+        for (const auto &plan : m_store->plans()) {
+            generated = generated || (plan.id == *m_currentPlan && !plan.model.empty());
+        }
+    }
+    if (!m_currentPlan) {
+        m_chat->setHeader(tr("Chat"));
+        m_chat->setAvailable(false, tr("Select a plan to talk about it."));
+    } else if (m_planRequest) {
+        m_chat->setHeader(tr("Chat"));
+        m_chat->setAvailable(false, tr("Wait until the plan has been generated."));
+    } else if (model.isEmpty()) {
+        m_chat->setHeader(tr("Chat"));
+        m_chat->setAvailable(false, tr("Choose a planner model on the Synopsis tab or in Settings first."));
+    } else {
+        m_chat->setHeader(generated ? tr("Chat with %1, which generated this plan.").arg(model)
+                                    : tr("Chat with %1 (this novel's planner model).").arg(model));
+        m_chat->setAvailable(true);
+    }
+}
+
+void MainWindow::sendChatMessage(const QString &message)
+{
+    if (!m_store || !m_currentPlan || m_planRequest || !saveSynopsis() || !savePlan()) {
+        return;
+    }
+    const QUrl server = normalizeServerUrl(AiSettings::load().serverUrl);
+    const QString model = chatModel();
+    if (!server.isValid() || model.isEmpty()) {
+        m_chat->showNote(tr("Set a valid LM Studio server address in Settings first."));
+        return;
+    }
+    QList<PlanChat::Turn> history;
+    if (!attempt(tr("Could not load the plan's conversation."),
+                 [&] { history = PlanChat::parse(QString::fromStdString(m_store->planChat(*m_currentPlan))); })) {
+        return;
+    }
+    m_chatPlan = m_currentPlan;
+    m_chat->start(server, model,
+                  PlanChat::messages(editorText(m_synopsisEdit), editorText(m_planEdit), history, message), message);
+}
+
+void MainWindow::onChatReply(const QString &message, const QString &reply, bool truncated)
+{
+    const std::optional<Id> plan = std::exchange(m_chatPlan, std::nullopt);
+    if (!m_store || !plan || plan != m_currentPlan) {
+        return; // the novel changed meanwhile
+    }
+    const PlanChat::Reply parsed = PlanChat::parseReply(reply);
+    if (parsed.message.isEmpty() && !parsed.plan) {
+        m_chat->showNote(parsed.planCutOff ? tr("The answer was cut off before the revised plan was complete, so "
+                                                "nothing was changed. Increase the model's context length in "
+                                                "LM Studio and try again.")
+                                           : tr("The model returned an empty answer."));
+        return;
+    }
+
+    bool apply = parsed.plan.has_value();
+    if (apply) {
+        const QString reason = PlanChat::incompleteReason(editorText(m_planEdit), *parsed.plan);
+        if (!reason.isEmpty()) {
+            QMessageBox box(QMessageBox::Warning, tr("Revised Plan"),
+                            tr("The revised plan from %1 looks incomplete: %2. Models sometimes return only the "
+                               "changed part.\n\nReplace the plan with it anyway? (Ctrl+Z in the plan undoes it.)")
+                                .arg(chatModel(), reason),
+                            QMessageBox::NoButton, this);
+            QPushButton *replace = box.addButton(tr("Replace Anyway"), QMessageBox::DestructiveRole);
+            box.addButton(tr("Keep the Current Plan"), QMessageBox::RejectRole);
+            box.exec();
+            apply = box.clickedButton() == replace;
+        }
+    }
+    if (apply) {
+        // One undoable edit, so Ctrl+Z in the plan brings the previous version back.
+        QTextCursor cursor(m_planEdit->document());
+        cursor.beginEditBlock();
+        cursor.select(QTextCursor::Document);
+        cursor.insertText(*parsed.plan);
+        cursor.endEditBlock();
+        m_planEdit->moveCursor(QTextCursor::Start);
+        savePlan();
+    }
+
+    QList<PlanChat::Turn> history;
+    attempt(tr("Could not save the conversation."), [&] {
+        history = PlanChat::parse(QString::fromStdString(m_store->planChat(*plan)));
+        history.append({QStringLiteral("user"), message, false});
+        QString content = parsed.message;
+        if (parsed.plan && !apply) {
+            content += (content.isEmpty() ? QString() : QStringLiteral("\n\n")) +
+                       tr("(The revised plan looked incomplete and was not applied.)");
+        }
+        history.append({QStringLiteral("assistant"), content, apply});
+        m_store->setPlanChat(*plan, PlanChat::serialize(history).toStdString());
+    });
+    m_chat->setHistory(history);
+    updateChatState();
+    if (parsed.planCutOff) {
+        m_chat->showNote(tr("The revised plan was cut off (the model reached its length limit), so it was not "
+                            "applied. Increase the model's context length in LM Studio and try again."));
+    } else if (truncated) {
+        m_chat->showNote(tr("The answer was cut off because the model reached its length limit."));
+    }
+}
+
+void MainWindow::clearChat()
+{
+    if (!m_store || !m_currentPlan || m_chat->isBusy()) {
+        return;
+    }
+    if (QMessageBox::question(this, tr("Clear Conversation"),
+                              tr("Forget the conversation about this plan? The plan itself is kept.")) !=
+        QMessageBox::Yes) {
+        return;
+    }
+    const Id plan = *m_currentPlan;
+    if (attempt(tr("Could not clear the conversation."), [&] { m_store->setPlanChat(plan, ""); })) {
+        m_chat->setHistory({});
+        updateChatState();
+    }
 }
 
 QPlainTextEdit *MainWindow::focusedEditor() const
