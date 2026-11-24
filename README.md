@@ -5,26 +5,39 @@ Runs on Windows, Linux, and macOS.
 
 ## Using it
 
-- **File → New Novel...** creates a novel, **File → Open Novel...** opens one (select the `.novel` folder).
-  The last novel is reopened on startup; a novel path can also be passed on the command line.
-- The chapter list on the left shows each chapter's title: its first line, minus `#` heading markers.
-  Add, delete and reorder chapters from the **Chapter** menu, or drag chapters in the list.
-- Chapters save automatically 1.5 s after you stop typing, when switching chapters, and on exit
-  (**Ctrl+S** saves immediately).
-- **File → Export as Markdown...** writes the whole novel to a single `.md` file.
+- **File → New Novel...** creates a novel (with Act 1 / Chapter 1 / Scene 1), **File → Open Novel...** opens
+  one (select the `.novel` folder). The last novel is reopened on startup; a novel path can also be passed on
+  the command line.
+- A novel is organised as **acts → chapters → scenes**, shown as a tree on the left. The **+ Act**,
+  **+ Chapter** and **+ Scene** buttons above it add a node after the current one (missing parents are created,
+  e.g. **+ Scene** on an empty act also adds a chapter). New acts and chapters open for renaming right away.
+- Rename with double-click or **F2**, delete with **Del** (with confirmation), reorder with **Alt+Up/Down** or
+  by dragging. Drag a scene onto another chapter, or a chapter onto another act, to move it there. The
+  **Structure** menu and the tree's right-click menu have the same commands.
+- Selecting a scene opens it in the editor. Scenes save automatically 1.5 s after you stop typing, when
+  switching scenes, and on exit (**Ctrl+S** saves immediately). The status bar shows word counts for the
+  scene, chapter and novel.
+- **File → Export as Markdown...** writes the whole novel to a single `.md` file: acts and chapters become
+  `#`/`##` headings, scenes are separated by `* * *`.
 
 ## Storage
 
 A novel is a [RocksDB](https://rocksdb.org) database, i.e. a folder (conventionally named `*.novel`).
-Each chapter is a separate entry holding that chapter's Markdown; the reading order is a separate entry, so
-reordering never rewrites chapter text:
+**Every scene's text is a separate entry**; acts and chapters only hold a title and the ordered ids of their
+children, so restructuring never rewrites scene text. Ids are unique across all kinds and never reused;
+`<id>` is zero-padded to 20 digits:
 
-| Key                     | Value                                              |
-|-------------------------|----------------------------------------------------|
-| `novel/format`          | format version (`1`)                               |
-| `novel/next_chapter_id` | next unused chapter id                             |
-| `novel/chapter_order`   | chapter ids in reading order, comma-separated      |
-| `chapter/<id>`          | chapter Markdown (`<id>` zero-padded to 20 digits) |
+| Key                   | Value                                   |
+|-----------------------|-----------------------------------------|
+| `novel/format`        | format version (`2`)                    |
+| `novel/next_id`       | next unused id                          |
+| `novel/acts`          | act ids in order, comma-separated       |
+| `act/<id>/title`      | act title                               |
+| `act/<id>/chapters`   | chapter ids in order                    |
+| `chapter/<id>/title`  | chapter title                           |
+| `chapter/<id>/scenes` | scene ids in order                      |
+| `scene/<id>/title`    | scene title                             |
+| `scene/<id>/text`     | scene Markdown                          |
 
 Writes are synced to disk and multi-key changes are atomic (RocksDB write batches). RocksDB locks an open
 novel, so only one NovelWriter can have it open at a time. See `src/NovelStore.h`.
@@ -99,7 +112,8 @@ conanfile.py              Conan dependencies (Qt 6 qtbase, RocksDB)
 profiles/windows-msvc     Conan profile for Windows (MSVC, C++20, Ninja)
 CMakeLists.txt            Build definition
 src/main.cpp              Application entry point
-src/MainWindow.*          Main window: chapter list, editor, autosave, menus, word counts
+src/MainWindow.*          Main window: structure tree + add buttons, scene editor, autosave, word counts
+src/NovelTree.*           Act/chapter/scene tree with hierarchy-aware drag and drop
 src/MarkdownHighlighter.* Live Markdown syntax highlighting (plain-text document)
 src/NovelStore.*          RocksDB novel storage (no Qt dependency)
 tests/NovelStoreTest.cpp  Storage tests (run via CTest)

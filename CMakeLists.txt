@@ -33,6 +33,8 @@ add_executable(novelwriter WIN32 MACOSX_BUNDLE
     src/MainWindow.h
     src/MarkdownHighlighter.cpp
     src/MarkdownHighlighter.h
+    src/NovelTree.cpp
+    src/NovelTree.h
 )
 target_link_libraries(novelwriter PRIVATE novelstore Qt6::Core Qt6::Gui Qt6::Widgets)
 novelwriter_warnings(novelwriter)

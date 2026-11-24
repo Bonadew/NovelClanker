@@ -10,12 +10,13 @@
 
 namespace {
 
-using ChapterId = NovelStore::ChapterId;
+using Id = NovelStore::Id;
+using Kind = NovelStore::Kind;
 
 constexpr std::string_view kFormatKey = "novel/format";
-constexpr std::string_view kFormatVersion = "1";
-constexpr std::string_view kNextIdKey = "novel/next_chapter_id";
-constexpr std::string_view kOrderKey = "novel/chapter_order";
+constexpr std::string_view kFormatVersion = "2";
+constexpr std::string_view kNextIdKey = "novel/next_id";
+constexpr std::string_view kActsKey = "novel/acts";
 
 rocksdb::Slice slice(std::string_view s)
 {
@@ -29,16 +30,17 @@ void check(const rocksdb::Status &status, std::string_view what)
     }
 }
 
-std::string chapterKey(ChapterId id)
+// e.g. key("scene", 7, "text") -> "scene/00000000000000000007/text"
+std::string key(const char *kind, Id id, const char *field)
 {
-    char buf[32];
-    std::snprintf(buf, sizeof buf, "chapter/%020llu", static_cast<unsigned long long>(id));
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%s/%020llu/%s", kind, static_cast<unsigned long long>(id), field);
     return buf;
 }
 
-ChapterId parseId(std::string_view text)
+Id parseId(std::string_view text)
 {
-    ChapterId value = 0;
+    Id value = 0;
     const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
     if (ec != std::errc() || end != text.data() + text.size()) {
         throw StorageError("Corrupt novel: invalid number '" + std::string(text) + "'");
@@ -46,27 +48,37 @@ ChapterId parseId(std::string_view text)
     return value;
 }
 
-std::string encodeIds(const std::vector<ChapterId> &ids)
+template <typename Node> std::string encodeIds(const std::vector<Node> &nodes)
 {
     std::string out;
-    for (ChapterId id : ids) {
+    for (const Node &node : nodes) {
         if (!out.empty()) {
             out += ',';
         }
-        out += std::to_string(id);
+        out += std::to_string(node.id);
     }
     return out;
 }
 
-std::vector<ChapterId> decodeIds(std::string_view text)
+std::vector<Id> decodeIds(std::string_view text)
 {
-    std::vector<ChapterId> ids;
+    std::vector<Id> ids;
     while (!text.empty()) {
         const auto comma = text.find(',');
         ids.push_back(parseId(text.substr(0, comma)));
         text = comma == std::string_view::npos ? std::string_view() : text.substr(comma + 1);
     }
     return ids;
+}
+
+template <typename T> auto clampedPos(const std::vector<T> &v, std::size_t position)
+{
+    return v.begin() + static_cast<std::ptrdiff_t>(std::min(position, v.size()));
+}
+
+template <typename T> auto at(std::vector<T> &v, std::size_t index)
+{
+    return v.begin() + static_cast<std::ptrdiff_t>(index);
 }
 
 // RocksDB takes paths as std::string. Pass UTF-8 so non-ASCII folder names work (on Windows this relies
@@ -100,37 +112,50 @@ NovelStore::NovelStore(const std::filesystem::path &dir, Mode mode) : m_path(dir
     options.compression = rocksdb::kLZ4Compression;
     options.create_if_missing = mode == Mode::Create;
     options.error_if_exists = mode == Mode::Create;
-
-    const auto opened = rocksdb::DB::Open(options, toUtf8(dir), &m_db);
-    if (mode == Mode::Open && opened.IsInvalidArgument()) {
-        // e.g. "CURRENT does not exist (create_if_missing is false)": not a database at all
-        throw StorageError("Not a NovelWriter novel: " + toUtf8(dir));
-    }
-    check(opened, "Cannot open novel");
+    check(rocksdb::DB::Open(options, toUtf8(dir), &m_db), "Cannot open novel");
 
     if (mode == Mode::Create) {
         rocksdb::WriteBatch batch;
         batch.Put(slice(kFormatKey), slice(kFormatVersion));
         batch.Put(slice(kNextIdKey), slice(std::to_string(m_nextId)));
-        batch.Put(slice(kOrderKey), slice(""));
+        batch.Put(slice(kActsKey), slice(""));
         check(m_db->Write(durableWrites(), &batch), "Cannot initialize novel");
         return;
     }
 
-    std::string value;
-    const auto status = m_db->Get({}, slice(kFormatKey), &value);
+    const auto get = [this](std::string_view k) {
+        std::string value;
+        const auto status = m_db->Get({}, slice(k), &value);
+        if (status.IsNotFound()) {
+            throw StorageError("Corrupt novel: missing entry '" + std::string(k) + "'");
+        }
+        check(status, "Cannot read novel");
+        return value;
+    };
+
+    std::string format;
+    const auto status = m_db->Get({}, slice(kFormatKey), &format);
     if (status.IsNotFound()) {
         throw StorageError("Not a NovelWriter novel: " + toUtf8(dir));
     }
     check(status, "Cannot read novel");
-    if (value != kFormatVersion) {
-        throw StorageError("Unsupported novel format version '" + value + "'");
+    if (format != kFormatVersion) {
+        throw StorageError("Unsupported novel format version '" + format + "' (this version reads format " +
+                           std::string(kFormatVersion) + ")");
     }
 
-    check(m_db->Get({}, slice(kNextIdKey), &value), "Cannot read novel");
-    m_nextId = parseId(value);
-    check(m_db->Get({}, slice(kOrderKey), &value), "Cannot read novel");
-    m_order = decodeIds(value);
+    m_nextId = parseId(get(kNextIdKey));
+    for (Id actId : decodeIds(get(kActsKey))) {
+        Act act{actId, get(key("act", actId, "title")), {}};
+        for (Id chapterId : decodeIds(get(key("act", actId, "chapters")))) {
+            Chapter chapter{chapterId, get(key("chapter", chapterId, "title")), {}};
+            for (Id sceneId : decodeIds(get(key("chapter", chapterId, "scenes")))) {
+                chapter.scenes.push_back({sceneId, get(key("scene", sceneId, "title"))});
+            }
+            act.chapters.push_back(std::move(chapter));
+        }
+        m_acts.push_back(std::move(act));
+    }
 }
 
 NovelStore::~NovelStore()
@@ -140,58 +165,237 @@ NovelStore::~NovelStore()
     }
 }
 
-std::string NovelStore::chapterText(ChapterId id) const
+std::optional<NovelStore::Location> NovelStore::locate(Id id) const
 {
-    std::string text;
-    check(m_db->Get({}, slice(chapterKey(id)), &text), "Cannot read chapter");
-    return text;
+    for (std::size_t a = 0; a < m_acts.size(); ++a) {
+        const Act &act = m_acts[a];
+        if (act.id == id) {
+            return Location{Kind::Act, a};
+        }
+        for (std::size_t c = 0; c < act.chapters.size(); ++c) {
+            const Chapter &chapter = act.chapters[c];
+            if (chapter.id == id) {
+                return Location{Kind::Chapter, a, c};
+            }
+            for (std::size_t s = 0; s < chapter.scenes.size(); ++s) {
+                if (chapter.scenes[s].id == id) {
+                    return Location{Kind::Scene, a, c, s};
+                }
+            }
+        }
+    }
+    return std::nullopt;
 }
 
-void NovelStore::setChapterText(ChapterId id, std::string_view markdown)
+NovelStore::Location NovelStore::require(Id id, std::optional<Kind> kind) const
 {
-    check(m_db->Put(durableWrites(), slice(chapterKey(id)), slice(markdown)), "Cannot save chapter");
+    const auto location = locate(id);
+    if (!location || (kind && location->kind != *kind)) {
+        throw std::invalid_argument("NovelStore: unknown id or wrong node kind: " + std::to_string(id));
+    }
+    return *location;
 }
 
-NovelStore::ChapterId NovelStore::insertChapter(std::size_t position, std::string_view markdown)
+std::optional<NovelStore::Kind> NovelStore::kindOf(Id id) const
 {
-    const ChapterId id = m_nextId;
-    std::vector<ChapterId> order = m_order;
-    order.insert(order.begin() + static_cast<std::ptrdiff_t>(std::min(position, order.size())), id);
+    const auto location = locate(id);
+    return location ? std::optional(location->kind) : std::nullopt;
+}
+
+std::optional<NovelStore::Id> NovelStore::parentOf(Id id) const
+{
+    const auto location = locate(id);
+    if (!location || location->kind == Kind::Act) {
+        return std::nullopt;
+    }
+    const Act &act = m_acts[location->act];
+    return location->kind == Kind::Chapter ? act.id : act.chapters[location->chapter].id;
+}
+
+NovelStore::Id NovelStore::addAct(std::size_t position, std::string_view title)
+{
+    const Id id = m_nextId;
+    std::vector<Act> acts = m_acts;
+    acts.insert(clampedPos(acts, position), Act{id, std::string(title), {}});
 
     rocksdb::WriteBatch batch;
-    batch.Put(slice(chapterKey(id)), slice(markdown));
-    batch.Put(slice(kNextIdKey), slice(std::to_string(id + 1)));
-    batch.Put(slice(kOrderKey), slice(encodeIds(order)));
-    check(m_db->Write(durableWrites(), &batch), "Cannot add chapter");
+    batch.Put(key("act", id, "title"), slice(title));
+    batch.Put(key("act", id, "chapters"), "");
+    batch.Put(slice(kActsKey), encodeIds(acts));
+    batch.Put(slice(kNextIdKey), std::to_string(id + 1));
+    check(m_db->Write(durableWrites(), &batch), "Cannot add act");
 
+    m_acts = std::move(acts);
     m_nextId = id + 1;
-    m_order = std::move(order);
     return id;
 }
 
-void NovelStore::removeChapter(ChapterId id)
+NovelStore::Id NovelStore::addChapter(Id actId, std::size_t position, std::string_view title)
 {
-    std::vector<ChapterId> order = m_order;
-    std::erase(order, id);
+    const Location where = require(actId, Kind::Act);
+    const Id id = m_nextId;
+    std::vector<Act> acts = m_acts;
+    auto &chapters = acts[where.act].chapters;
+    chapters.insert(clampedPos(chapters, position), Chapter{id, std::string(title), {}});
 
     rocksdb::WriteBatch batch;
-    batch.Delete(slice(chapterKey(id)));
-    batch.Put(slice(kOrderKey), slice(encodeIds(order)));
-    check(m_db->Write(durableWrites(), &batch), "Cannot delete chapter");
+    batch.Put(key("chapter", id, "title"), slice(title));
+    batch.Put(key("chapter", id, "scenes"), "");
+    batch.Put(key("act", actId, "chapters"), encodeIds(chapters));
+    batch.Put(slice(kNextIdKey), std::to_string(id + 1));
+    check(m_db->Write(durableWrites(), &batch), "Cannot add chapter");
 
-    m_order = std::move(order);
+    m_acts = std::move(acts);
+    m_nextId = id + 1;
+    return id;
 }
 
-void NovelStore::moveChapter(std::size_t from, std::size_t to)
+NovelStore::Id NovelStore::addScene(Id chapterId, std::size_t position, std::string_view title,
+                                    std::string_view text)
 {
-    if (from >= m_order.size() || to >= m_order.size() || from == to) {
-        return;
-    }
-    std::vector<ChapterId> order = m_order;
-    const ChapterId id = order[from];
-    order.erase(order.begin() + static_cast<std::ptrdiff_t>(from));
-    order.insert(order.begin() + static_cast<std::ptrdiff_t>(to), id);
+    const Location where = require(chapterId, Kind::Chapter);
+    const Id id = m_nextId;
+    std::vector<Act> acts = m_acts;
+    auto &scenes = acts[where.act].chapters[where.chapter].scenes;
+    scenes.insert(clampedPos(scenes, position), Scene{id, std::string(title)});
 
-    check(m_db->Put(durableWrites(), slice(kOrderKey), slice(encodeIds(order))), "Cannot reorder chapters");
-    m_order = std::move(order);
+    rocksdb::WriteBatch batch;
+    batch.Put(key("scene", id, "title"), slice(title));
+    batch.Put(key("scene", id, "text"), slice(text));
+    batch.Put(key("chapter", chapterId, "scenes"), encodeIds(scenes));
+    batch.Put(slice(kNextIdKey), std::to_string(id + 1));
+    check(m_db->Write(durableWrites(), &batch), "Cannot add scene");
+
+    m_acts = std::move(acts);
+    m_nextId = id + 1;
+    return id;
+}
+
+void NovelStore::rename(Id id, std::string_view title)
+{
+    const Location where = require(id);
+    static constexpr const char *kKindNames[] = {"act", "chapter", "scene"};
+    check(m_db->Put(durableWrites(), key(kKindNames[static_cast<int>(where.kind)], id, "title"), slice(title)),
+          "Cannot rename");
+
+    Act &act = m_acts[where.act];
+    switch (where.kind) {
+    case Kind::Act:
+        act.title = title;
+        break;
+    case Kind::Chapter:
+        act.chapters[where.chapter].title = title;
+        break;
+    case Kind::Scene:
+        act.chapters[where.chapter].scenes[where.scene].title = title;
+        break;
+    }
+}
+
+std::string NovelStore::sceneText(Id scene) const
+{
+    require(scene, Kind::Scene);
+    std::string text;
+    check(m_db->Get({}, key("scene", scene, "text"), &text), "Cannot read scene");
+    return text;
+}
+
+void NovelStore::setSceneText(Id scene, std::string_view markdown)
+{
+    require(scene, Kind::Scene);
+    check(m_db->Put(durableWrites(), key("scene", scene, "text"), slice(markdown)), "Cannot save scene");
+}
+
+void NovelStore::remove(Id id)
+{
+    const Location where = require(id);
+    std::vector<Act> acts = m_acts;
+    rocksdb::WriteBatch batch;
+
+    const auto deleteScene = [&](const Scene &scene) {
+        batch.Delete(key("scene", scene.id, "title"));
+        batch.Delete(key("scene", scene.id, "text"));
+    };
+    const auto deleteChapter = [&](const Chapter &chapter) {
+        for (const Scene &scene : chapter.scenes) {
+            deleteScene(scene);
+        }
+        batch.Delete(key("chapter", chapter.id, "title"));
+        batch.Delete(key("chapter", chapter.id, "scenes"));
+    };
+
+    Act &act = acts[where.act];
+    switch (where.kind) {
+    case Kind::Act:
+        for (const Chapter &chapter : act.chapters) {
+            deleteChapter(chapter);
+        }
+        batch.Delete(key("act", id, "title"));
+        batch.Delete(key("act", id, "chapters"));
+        acts.erase(at(acts, where.act));
+        batch.Put(slice(kActsKey), encodeIds(acts));
+        break;
+    case Kind::Chapter:
+        deleteChapter(act.chapters[where.chapter]);
+        act.chapters.erase(at(act.chapters, where.chapter));
+        batch.Put(key("act", act.id, "chapters"), encodeIds(act.chapters));
+        break;
+    case Kind::Scene: {
+        Chapter &chapter = act.chapters[where.chapter];
+        deleteScene(chapter.scenes[where.scene]);
+        chapter.scenes.erase(at(chapter.scenes, where.scene));
+        batch.Put(key("chapter", chapter.id, "scenes"), encodeIds(chapter.scenes));
+        break;
+    }
+    }
+
+    check(m_db->Write(durableWrites(), &batch), "Cannot delete");
+    m_acts = std::move(acts);
+}
+
+void NovelStore::move(Id id, Id newParent, std::size_t position)
+{
+    const Location from = require(id);
+    std::vector<Act> acts = m_acts;
+    rocksdb::WriteBatch batch;
+
+    // Removing a node never shifts the indices of nodes at a higher level, so `to` (located before the
+    // removal) stays valid.
+    switch (from.kind) {
+    case Kind::Act: {
+        if (newParent != 0) {
+            throw std::invalid_argument("NovelStore: acts have no parent");
+        }
+        Act node = std::move(acts[from.act]);
+        acts.erase(at(acts, from.act));
+        acts.insert(clampedPos(acts, position), std::move(node));
+        batch.Put(slice(kActsKey), encodeIds(acts));
+        break;
+    }
+    case Kind::Chapter: {
+        const Location to = require(newParent, Kind::Act);
+        auto &source = acts[from.act].chapters;
+        Chapter node = std::move(source[from.chapter]);
+        source.erase(at(source, from.chapter));
+        auto &target = acts[to.act].chapters;
+        target.insert(clampedPos(target, position), std::move(node));
+        batch.Put(key("act", acts[from.act].id, "chapters"), encodeIds(source));
+        batch.Put(key("act", newParent, "chapters"), encodeIds(target));
+        break;
+    }
+    case Kind::Scene: {
+        const Location to = require(newParent, Kind::Chapter);
+        auto &sourceChapter = acts[from.act].chapters[from.chapter];
+        Scene node = std::move(sourceChapter.scenes[from.scene]);
+        sourceChapter.scenes.erase(at(sourceChapter.scenes, from.scene));
+        auto &target = acts[to.act].chapters[to.chapter].scenes;
+        target.insert(clampedPos(target, position), std::move(node));
+        batch.Put(key("chapter", sourceChapter.id, "scenes"), encodeIds(sourceChapter.scenes));
+        batch.Put(key("chapter", newParent, "scenes"), encodeIds(target));
+        break;
+    }
+    }
+
+    check(m_db->Write(durableWrites(), &batch), "Cannot move");
+    m_acts = std::move(acts);
 }
