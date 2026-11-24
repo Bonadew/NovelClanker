@@ -17,6 +17,8 @@ constexpr std::string_view kFormatKey = "novel/format";
 constexpr std::string_view kFormatVersion = "2";
 constexpr std::string_view kNextIdKey = "novel/next_id";
 constexpr std::string_view kActsKey = "novel/acts";
+constexpr std::string_view kSynopsisKey = "novel/synopsis";
+constexpr std::string_view kPlanKey = "novel/plan";
 
 rocksdb::Slice slice(std::string_view s)
 {
@@ -304,6 +306,41 @@ void NovelStore::setSceneText(Id scene, std::string_view markdown)
 {
     require(scene, Kind::Scene);
     check(m_db->Put(durableWrites(), key("scene", scene, "text"), slice(markdown)), "Cannot save scene");
+}
+
+namespace {
+
+std::string getOptional(rocksdb::DB &db, std::string_view k, std::string_view what)
+{
+    std::string value;
+    const auto status = db.Get({}, slice(k), &value);
+    if (status.IsNotFound()) {
+        return {};
+    }
+    check(status, what);
+    return value;
+}
+
+} // namespace
+
+std::string NovelStore::synopsis() const
+{
+    return getOptional(*m_db, kSynopsisKey, "Cannot read synopsis");
+}
+
+void NovelStore::setSynopsis(std::string_view text)
+{
+    check(m_db->Put(durableWrites(), slice(kSynopsisKey), slice(text)), "Cannot save synopsis");
+}
+
+std::string NovelStore::plan() const
+{
+    return getOptional(*m_db, kPlanKey, "Cannot read plan");
+}
+
+void NovelStore::setPlan(std::string_view markdown)
+{
+    check(m_db->Put(durableWrites(), slice(kPlanKey), slice(markdown)), "Cannot save plan");
 }
 
 void NovelStore::remove(Id id)

@@ -27,20 +27,25 @@ target_include_directories(novelstore PUBLIC src)
 target_link_libraries(novelstore PRIVATE RocksDB::rocksdb)
 novelwriter_warnings(novelstore)
 
-# AI integration (LM Studio client, AI settings). Qt Core/Network only, so it can be tested without widgets.
+# AI integration (LM Studio client, chat completions, prompts, AI settings). Qt Core/Network only, so it can be
+# tested without widgets.
 add_library(novelai STATIC
     src/AiSettings.cpp
     src/AiSettings.h
+    src/LmChat.cpp
+    src/LmChat.h
     src/LmStudioClient.cpp
     src/LmStudioClient.h
+    src/PlanPrompt.cpp
+    src/PlanPrompt.h
 )
 target_include_directories(novelai PUBLIC src)
 target_link_libraries(novelai PUBLIC Qt6::Core Qt6::Network)
 set_target_properties(novelai PROPERTIES AUTOMOC ON)
 novelwriter_warnings(novelai)
 
-add_executable(novelwriter WIN32 MACOSX_BUNDLE
-    src/main.cpp
+# User interface. A library so tests can drive the real windows headlessly.
+add_library(novelui STATIC
     src/MainWindow.cpp
     src/MainWindow.h
     src/MarkdownHighlighter.cpp
@@ -50,11 +55,15 @@ add_executable(novelwriter WIN32 MACOSX_BUNDLE
     src/SettingsDialog.cpp
     src/SettingsDialog.h
 )
-target_link_libraries(novelwriter PRIVATE novelstore novelai Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(novelui PUBLIC novelstore novelai Qt6::Core Qt6::Gui Qt6::Widgets)
+set_target_properties(novelui PROPERTIES AUTOMOC ON)
+novelwriter_warnings(novelui)
+
+add_executable(novelwriter WIN32 MACOSX_BUNDLE src/main.cpp)
+target_link_libraries(novelwriter PRIVATE novelui)
 novelwriter_warnings(novelwriter)
 
 set_target_properties(novelwriter PROPERTIES
-    AUTOMOC ON
     OUTPUT_NAME "NovelWriter"
     MACOSX_BUNDLE_GUI_IDENTIFIER "com.novelwriter.app"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
@@ -142,18 +151,27 @@ if(BUILD_TESTING)
     novelwriter_warnings(lmstudio_test)
     add_test(NAME lmstudio COMMAND lmstudio_test)
 
-    add_executable(settings_test tests/SettingsDialogTest.cpp src/SettingsDialog.cpp src/SettingsDialog.h)
-    target_link_libraries(settings_test PRIVATE novelai Qt6::Widgets)
-    set_target_properties(settings_test PROPERTIES AUTOMOC ON)
+    add_executable(settings_test tests/SettingsDialogTest.cpp)
+    target_link_libraries(settings_test PRIVATE novelui)
     novelwriter_warnings(settings_test)
     add_test(NAME settings COMMAND settings_test)
-    # Headless: Qt's "minimal" platform never shows a window.
-    set_tests_properties(settings PROPERTIES ENVIRONMENT
-        "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${QT_BIN_DIR}/../plugins")
 
+    add_executable(chat_test tests/ChatCompletionTest.cpp)
+    target_link_libraries(chat_test PRIVATE novelai)
+    novelwriter_warnings(chat_test)
+    add_test(NAME chat COMMAND chat_test)
+
+    add_executable(mainwindow_test tests/MainWindowTest.cpp)
+    target_link_libraries(mainwindow_test PRIVATE novelui)
+    novelwriter_warnings(mainwindow_test)
+    add_test(NAME mainwindow COMMAND mainwindow_test "${CMAKE_CURRENT_BINARY_DIR}/test-data-ui")
+
+    # Widget tests run headless: Qt's "minimal" platform never shows a window.
+    set_tests_properties(settings mainwindow PROPERTIES TIMEOUT 120 ENVIRONMENT
+        "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${QT_BIN_DIR}/../plugins")
     if(WIN32)
         # Find the Qt DLLs without relying on windeployqt having run.
-        set_tests_properties(lmstudio settings PROPERTIES
+        set_tests_properties(lmstudio settings chat mainwindow PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${QT_BIN_DIR}")
     endif()
 endif()

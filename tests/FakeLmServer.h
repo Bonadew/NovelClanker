@@ -3,24 +3,30 @@
 // Minimal fake LM Studio HTTP server for tests.
 
 #include <QHash>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QObject>
 #include <QStringList>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QUrl>
 
-// Minimal HTTP/1.1 server: answers GET requests from a path -> (status, body) table, 404 otherwise.
+// Minimal HTTP/1.1 server: answers requests from a path -> response table, 404 otherwise.
 class FakeServer : public QObject
 {
   public:
     struct Response {
         int status = 200;
         QByteArray body;
+        QByteArray contentType = "application/json";
+        bool keepOpen = false; // send the body but keep the connection open (an unfinished stream)
     };
 
     QHash<QString, Response> routes;
-    QStringList requested;
-    bool silent = false; // accept connections but never answer (to test timeouts)
+    QStringList requested;      // request paths, in order
+    QByteArray lastRequestBody; // body of the most recent request
+    bool silent = false;        // accept connections but never answer (to test timeouts)
 
     FakeServer()
     {
@@ -43,18 +49,35 @@ class FakeServer : public QObject
     {
         QByteArray &buffer = m_buffers[socket];
         buffer += socket->readAll();
-        if (!buffer.contains("\r\n\r\n") || silent) {
+        const qsizetype headerEnd = buffer.indexOf("\r\n\r\n");
+        if (headerEnd < 0 || silent) {
+            return;
+        }
+        // Wait for the whole body (Content-Length).
+        qsizetype contentLength = 0;
+        for (const QByteArray &line : buffer.left(headerEnd).split('\n')) {
+            if (line.toLower().startsWith("content-length:")) {
+                contentLength = line.mid(15).trimmed().toLongLong();
+            }
+        }
+        if (buffer.size() < headerEnd + 4 + contentLength) {
             return;
         }
         const QString path = QString::fromLatin1(buffer.split(' ').value(1));
+        lastRequestBody = buffer.mid(headerEnd + 4, contentLength);
         m_buffers.remove(socket);
         requested << path;
 
         const Response response = routes.value(path, Response{404, R"({"error":"Unexpected endpoint"})"});
-        socket->write("HTTP/1.1 " + QByteArray::number(response.status) + " X\r\n" +
-                      "Content-Type: application/json\r\nConnection: close\r\nContent-Length: " +
-                      QByteArray::number(response.body.size()) + "\r\n\r\n" + response.body);
-        socket->disconnectFromHost();
+        QByteArray head = "HTTP/1.1 " + QByteArray::number(response.status) + " X\r\nContent-Type: " +
+                          response.contentType + "\r\nConnection: close\r\n";
+        if (!response.keepOpen) {
+            head += "Content-Length: " + QByteArray::number(response.body.size()) + "\r\n";
+        }
+        socket->write(head + "\r\n" + response.body);
+        if (!response.keepOpen) {
+            socket->disconnectFromHost();
+        }
     }
 
     QTcpServer m_server;
@@ -69,3 +92,30 @@ inline const QByteArray kSampleNativeModels = R"({"models": [
     {"type": "llm", "key": "alpha-27b", "display_name": "alpha 27B", "params_string": null,
      "quantization": {"name": "IQ2_S"}, "loaded_instances": [{"id": "alpha-27b"}]}
 ]})";
+
+// Builds an OpenAI-style streamed chat completion (server-sent events) from content pieces.
+inline QByteArray sseStream(const QStringList &pieces, const QString &finishReason = "stop", bool done = true,
+                            const QStringList &reasoningPieces = {})
+{
+    QByteArray out;
+    const auto event = [&out](const QJsonObject &delta, const QJsonValue &finish) {
+        const QJsonObject choice{{"index", 0}, {"delta", delta}, {"finish_reason", finish}};
+        out += "data: " +
+               QJsonDocument(QJsonObject{{"object", "chat.completion.chunk"}, {"choices", QJsonArray{choice}}})
+                   .toJson(QJsonDocument::Compact) +
+               "\n\n";
+    };
+    for (const QString &r : reasoningPieces) {
+        event(QJsonObject{{"reasoning_content", r}}, QJsonValue::Null);
+    }
+    for (const QString &piece : pieces) {
+        event(QJsonObject{{"content", piece}}, QJsonValue::Null);
+    }
+    if (!finishReason.isEmpty()) {
+        event(QJsonObject{}, finishReason);
+    }
+    if (done) {
+        out += "data: [DONE]\n\n";
+    }
+    return out;
+}

@@ -3,6 +3,7 @@
 #include "NovelStore.h"
 
 #include <QMainWindow>
+#include <QPointer>
 
 #include <memory>
 #include <optional>
@@ -10,9 +11,13 @@
 #include <unordered_set>
 
 class QAction;
+class QLabel;
 class QPlainTextEdit;
+class QPushButton;
+class QTabWidget;
 class QTimer;
 class QTreeWidgetItem;
+class ChatCompletion;
 class MarkdownHighlighter;
 class NovelTree;
 
@@ -55,6 +60,22 @@ class MainWindow : public QMainWindow
     bool saveCurrentScene();
     void onTextChanged();
 
+    // Synopsis and plan views
+    QWidget *buildSynopsisView();
+    QWidget *buildPlanView();
+    void loadSynopsisAndPlan();
+    bool saveSynopsis();
+    bool savePlan();
+    bool saveAll(); // scene, synopsis and plan
+    void generatePlan();
+    void stopPlanGeneration();
+    void onPlanFinished(const QString &plan, bool truncated);
+    void onPlanFailed(const QString &error);
+    void showPlanText(const QString &text);
+    void setPlanGenerating(bool generating);
+    void updatePlannerStatus();
+    QPlainTextEdit *focusedEditor() const;
+
     // Tree and status
     void rebuildTree(std::optional<Id> select);
     QTreeWidgetItem *findItem(Id id) const;
@@ -75,6 +96,24 @@ class MainWindow : public QMainWindow
     QPlainTextEdit *m_editor = nullptr;
     MarkdownHighlighter *m_highlighter = nullptr;
     QTimer *m_autosaveTimer = nullptr;
+
+    QTabWidget *m_tabs = nullptr;
+    QPlainTextEdit *m_synopsisEdit = nullptr;
+    QTimer *m_synopsisTimer = nullptr;
+    QLabel *m_synopsisStatus = nullptr;
+    QPushButton *m_generateButton = nullptr;
+    QWidget *m_planView = nullptr;
+    QPlainTextEdit *m_planEdit = nullptr;
+    QTimer *m_planTimer = nullptr;
+    QLabel *m_planStatus = nullptr;
+    QPushButton *m_stopButton = nullptr;
+    QTimer *m_planRefresh = nullptr; // throttles redraws while a plan streams in
+    QString m_pendingPlanText;
+    QPointer<ChatCompletion> m_planRequest;
+    QString m_planBeforeGeneration; // restored if generation fails
+    QString m_planModel;
+    bool m_synopsisDirty = false; // unsaved changes
+    bool m_planDirty = false;
 
     QAction *m_saveAction = nullptr;
     QAction *m_exportAction = nullptr;

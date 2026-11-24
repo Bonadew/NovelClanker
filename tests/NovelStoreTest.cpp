@@ -149,6 +149,31 @@ void testRemovedEntriesAreGone(const fs::path &dir)
     EXPECT(outline(store) == "Act[]");
 }
 
+void testSynopsisAndPlan(const fs::path &dir)
+{
+    // Stored byte-for-byte: CRLF, tabs, trailing/leading whitespace, non-breaking spaces, emoji, NUL.
+    const std::string synopsis =
+        std::string("  A tale\r\n\tof two\xC2\xA0" "cities \xF0\x9F\x8F\x99\n\n  ") + '\0' + "end ";
+    const std::string plan = "# Plan\n\n## Act 1\n";
+    {
+        NovelStore store(dir, NovelStore::Mode::Create);
+        EXPECT(store.synopsis().empty() && store.plan().empty()); // optional entries
+        store.setSynopsis(synopsis);
+        store.setPlan(plan);
+        EXPECT(store.synopsis() == synopsis);
+    }
+    {
+        NovelStore store(dir, NovelStore::Mode::Open);
+        EXPECT(store.synopsis() == synopsis);
+        EXPECT(store.synopsis().size() == synopsis.size());
+        EXPECT(store.plan() == plan);
+        store.setPlan("");
+    }
+    NovelStore store(dir, NovelStore::Mode::Open);
+    EXPECT(store.plan().empty());
+    EXPECT(store.synopsis() == synopsis);
+}
+
 void testErrors(const fs::path &root)
 {
     const fs::path existing = root / "existing.novel";
@@ -181,6 +206,7 @@ int main(int argc, char **argv)
         // Non-ASCII folder name (needs UTF-8 filename support in RocksDB on Windows).
         testStructure(root / fs::path(u8"Mitt Äventyr 小説.novel"));
         testRemovedEntriesAreGone(root / "removed.novel");
+        testSynopsisAndPlan(root / "synopsis.novel");
         testErrors(root);
     } catch (const std::exception &e) {
         std::fprintf(stderr, "FAIL: unexpected exception: %s\n", e.what());

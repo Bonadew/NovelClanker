@@ -28,6 +28,8 @@ class StorageError : public std::runtime_error
 //   novel/format          format version ("2")
 //   novel/next_id         next unused id (decimal)
 //   novel/acts            act ids in order (comma-separated decimals)
+//   novel/synopsis        the synopsis, exactly as written (optional; missing = empty)
+//   novel/plan            the novel plan, Markdown (optional; missing = empty)
 //   act/<id>/title        act title
 //   act/<id>/chapters     chapter ids in order
 //   chapter/<id>/title    chapter title
@@ -98,6 +100,12 @@ class NovelStore
 
     std::string sceneText(Id scene) const;
     void setSceneText(Id scene, std::string_view markdown);
+
+    // Synopsis and plan are stored byte-for-byte as given. Both are empty until set.
+    std::string synopsis() const;
+    void setSynopsis(std::string_view text);
+    std::string plan() const;
+    void setPlan(std::string_view markdown);
 
     // Removes a node and everything below it.
     void remove(Id id);

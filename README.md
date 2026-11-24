@@ -26,6 +26,32 @@ Runs on Windows, Linux, and macOS.
   **orchestrator/planner** model and one for the **prose writer** model. Use **Refresh** after starting
   LM Studio's server. Settings are stored per user (QSettings), not in the novel.
 
+- The **Synopsis** tab holds the novel's synopsis: write or paste it there. It is stored exactly as written.
+- **Generate Plan** (on the Synopsis tab) asks the planner model to turn the synopsis into a plan. The plan
+  streams into the **Plan** tab as it is written (**Stop** keeps what has been written so far) and can then be
+  edited freely; it is saved automatically like everything else. Reasoning ("thinking") output from reasoning
+  models is left out. If the model hits its length limit the plan view says so; raise the model's context
+  length in LM Studio (a full plan needs roughly 8-16k tokens).
+
+### The plan prompt
+
+The prompt is in `src/PlanPrompt.cpp`. It asks the model to act as a developmental editor and produce a plan
+that stays faithful to the synopsis. The model first lays out a *story spine* (the synopsis's key events and
+turning points in order, each assigned to an act) and then builds three acts from it (roughly 25/50/25% of the
+chapters), giving every scene a POV character, goal, conflict and outcome. It lists its own inventions as open
+questions. The plan has a fixed Markdown shape that mirrors the app's acts, chapters and scenes:
+
+```
+# <Working title>
+## Premise / ## Genre, tone and point of view / ## Themes / ## Characters / ## Settings
+## Story spine
+## Structure
+### Act 1: <title>
+#### Chapter 1: <title>
+- **Scene 1: <title>**: POV: <character>. Setting: <place, time>. <Goal, conflict and outcome.>
+## Open questions
+```
+
 ## Storage
 
 A novel is a [RocksDB](https://rocksdb.org) database, i.e. a folder (conventionally named `*.novel`).
@@ -44,6 +70,8 @@ children, so restructuring never rewrites scene text. Ids are unique across all 
 | `chapter/<id>/scenes` | scene ids in order                      |
 | `scene/<id>/title`    | scene title                             |
 | `scene/<id>/text`     | scene Markdown                          |
+| `novel/synopsis`      | synopsis, exactly as written (optional) |
+| `novel/plan`          | plan, Markdown (optional)               |
 
 Writes are synced to disk and multi-key changes are atomic (RocksDB write batches). RocksDB locks an open
 novel, so only one NovelWriter can have it open at a time. See `src/NovelStore.h`.
@@ -97,9 +125,13 @@ cmake --build --preset conan-release
 ./build/Release/NovelWriter      # macOS: open build/Release/NovelWriter.app
 ```
 
-Run the tests with `ctest --test-dir build/Release --output-on-failure`. They're self-contained (the LM Studio
-tests use a fake server and the settings view runs headless). To also check the settings view against a real
-LM Studio, set `NOVELWRITER_LIVE_LMSTUDIO=http://127.0.0.1:1234` and run `settings_test` directly.
+Run the tests with `ctest --test-dir build/Release --output-on-failure`. They're self-contained: the LM Studio
+tests use a fake server and the window tests run headless (no window appears). Optional checks against a real
+LM Studio (`NOVELWRITER_LIVE_LMSTUDIO=http://127.0.0.1:1234`):
+
+- `settings_test` also lists the server's models in the settings view.
+- `chat_test` with `NOVELWRITER_LIVE_PLANNER_MODEL=<model id>` also generates a plan from a sample synopsis
+  (written to `NOVELWRITER_LIVE_PLAN_OUT` if set).
 
 For a Debug build, run `conan install` again with `-s build_type=Debug` and use the `conan-debug` presets.
 
@@ -120,12 +152,14 @@ conanfile.py              Conan dependencies (Qt 6 qtbase incl. Network, RocksDB
 profiles/windows-msvc     Conan profile for Windows (MSVC, C++20, Ninja)
 CMakeLists.txt            Build definition
 src/main.cpp              Application entry point
-src/MainWindow.*          Main window: structure tree + add buttons, scene editor, autosave, word counts
+src/MainWindow.*          Main window: Manuscript/Synopsis/Plan tabs, structure tree, editors, autosave
 src/NovelTree.*           Act/chapter/scene tree with hierarchy-aware drag and drop
 src/MarkdownHighlighter.* Live Markdown syntax highlighting (plain-text document)
 src/NovelStore.*          RocksDB novel storage (no Qt dependency)
 src/LmStudioClient.*      LM Studio client: fetches models (native REST API, with fallbacks)
 src/AiSettings.*          Server address and model choices (QSettings)
 src/SettingsDialog.*      Settings view
-tests/                    Storage, LM Studio client and settings view tests (run via CTest)
+src/LmChat.*              Streamed chat completions (OpenAI-compatible), reasoning removal
+src/PlanPrompt.*          The prompt that turns a synopsis into a plan
+tests/                    Storage, LM Studio, chat, settings and main window tests (run via CTest)
 ```

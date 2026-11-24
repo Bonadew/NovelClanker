@@ -1,10 +1,18 @@
 #include "MainWindow.h"
 
+#include "AiSettings.h"
+#include "LmChat.h"
+#include "LmStudioClient.h"
 #include "MarkdownHighlighter.h"
 #include "NovelTree.h"
+#include "PlanPrompt.h"
 #include "SettingsDialog.h"
 
 #include <QAction>
+#include <QApplication>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QTabWidget>
 #include <QCloseEvent>
 #include <QDir>
 #include <QFileDialog>
@@ -32,6 +40,35 @@ constexpr int kIdRole = Qt::UserRole;
 
 using Id = NovelStore::Id;
 using Kind = NovelStore::Kind;
+
+// The editor's text exactly as shown. QPlainTextEdit::toPlainText() would replace non-breaking spaces with
+// ordinary spaces; the raw text keeps them and only needs paragraph separators turned back into newlines.
+QString editorText(const QPlainTextEdit *edit)
+{
+    QString text = edit->document()->toRawText();
+    text.replace(QChar::ParagraphSeparator, u'\n');
+    text.replace(QChar::LineSeparator, u'\n');
+    return text;
+}
+
+QPlainTextEdit *makeTextEditor(QWidget *parent)
+{
+    auto *edit = new QPlainTextEdit(parent);
+    QFont font = edit->font();
+    font.setPointSize(12);
+    edit->setFont(font);
+    edit->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    edit->document()->setDocumentMargin(24);
+    return edit;
+}
+
+QTimer *makeAutosaveTimer(QObject *parent)
+{
+    auto *timer = new QTimer(parent);
+    timer->setSingleShot(true);
+    timer->setInterval(kAutosaveDelayMs);
+    return timer;
+}
 
 qsizetype countWords(const QString &text)
 {
@@ -172,12 +209,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     leftLayout->addWidget(m_tree);
 
     // --- Editor --------------------------------------------------------------------------------------
-    m_editor = new QPlainTextEdit(this);
-    QFont font = m_editor->font();
-    font.setPointSize(12);
-    m_editor->setFont(font);
-    m_editor->setLineWrapMode(QPlainTextEdit::WidgetWidth);
-    m_editor->document()->setDocumentMargin(24);
+    m_editor = makeTextEditor(this);
+    m_editor->setObjectName("sceneEdit");
     m_highlighter = new MarkdownHighlighter(m_editor->document());
 
     auto *splitter = new QSplitter(this);
@@ -185,11 +218,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     splitter->addWidget(m_editor);
     splitter->setStretchFactor(1, 1);
     splitter->setSizes({260, 840});
-    setCentralWidget(splitter);
 
-    m_autosaveTimer = new QTimer(this);
-    m_autosaveTimer->setSingleShot(true);
-    m_autosaveTimer->setInterval(kAutosaveDelayMs);
+    m_tabs = new QTabWidget(this);
+    m_tabs->setObjectName("tabs");
+    m_tabs->setDocumentMode(true);
+    m_tabs->addTab(splitter, tr("Manuscript"));
+    m_tabs->addTab(buildSynopsisView(), tr("Synopsis"));
+    m_planView = buildPlanView();
+    m_tabs->addTab(m_planView, tr("Plan"));
+    m_tabs->setTabVisible(m_tabs->indexOf(m_planView), false); // shown once there is a plan
+    setCentralWidget(m_tabs);
+
+    m_autosaveTimer = makeAutosaveTimer(this);
     connect(m_autosaveTimer, &QTimer::timeout, this, &MainWindow::saveCurrentScene);
 
     // --- Menus ---------------------------------------------------------------------------------------
@@ -202,16 +242,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     fileMenu->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
 
     QMenu *editMenu = menuBar()->addMenu(tr("&Edit"));
-    editMenu->addAction(tr("&Undo"), QKeySequence::Undo, m_editor, &QPlainTextEdit::undo);
-    editMenu->addAction(tr("&Redo"), QKeySequence::Redo, m_editor, &QPlainTextEdit::redo);
+    const auto onEditor = [this](void (QPlainTextEdit::*method)()) {
+        return [this, method] {
+            if (QPlainTextEdit *edit = focusedEditor()) {
+                (edit->*method)();
+            }
+        };
+    };
+    editMenu->addAction(tr("&Undo"), QKeySequence::Undo, this, onEditor(&QPlainTextEdit::undo));
+    editMenu->addAction(tr("&Redo"), QKeySequence::Redo, this, onEditor(&QPlainTextEdit::redo));
     editMenu->addSeparator();
-    editMenu->addAction(tr("Cu&t"), QKeySequence::Cut, m_editor, &QPlainTextEdit::cut);
-    editMenu->addAction(tr("&Copy"), QKeySequence::Copy, m_editor, &QPlainTextEdit::copy);
-    editMenu->addAction(tr("&Paste"), QKeySequence::Paste, m_editor, &QPlainTextEdit::paste);
+    editMenu->addAction(tr("Cu&t"), QKeySequence::Cut, this, onEditor(&QPlainTextEdit::cut));
+    editMenu->addAction(tr("&Copy"), QKeySequence::Copy, this, onEditor(&QPlainTextEdit::copy));
+    editMenu->addAction(tr("&Paste"), QKeySequence::Paste, this, onEditor(&QPlainTextEdit::paste));
     editMenu->addSeparator();
     QAction *settingsAction = editMenu->addAction(tr("&Settings..."), QKeySequence::Preferences, this, [this] {
         SettingsDialog dialog(this);
         dialog.exec();
+        updatePlannerStatus();
     });
     settingsAction->setMenuRole(QAction::PreferencesRole); // macOS: app menu "Settings..."
 
@@ -245,6 +293,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(m_editor, &QPlainTextEdit::textChanged, this, &MainWindow::onTextChanged);
 
     showItem(nullptr);
+    loadSynopsisAndPlan();
     updateTitle();
 }
 
@@ -260,7 +309,8 @@ bool MainWindow::openNovel(const QString &dir, NovelStore::Mode mode)
         QFileInfo(dir).canonicalFilePath() == QFileInfo(fromPath(m_store->path())).canonicalFilePath()) {
         return true; // already open (RocksDB would refuse a second lock anyway)
     }
-    saveCurrentScene();
+    stopPlanGeneration();
+    saveAll();
 
     std::unique_ptr<NovelStore> store;
     std::unordered_map<Id, qsizetype> words;
@@ -297,14 +347,19 @@ bool MainWindow::openNovel(const QString &dir, NovelStore::Mode mode)
     m_store = std::move(store);
     QSettings().setValue(kLastNovelKey, dir);
     rebuildTree(firstScene);
+    loadSynopsisAndPlan();
     updateTitle();
     return true;
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    if (saveCurrentScene() ||
-        QMessageBox::question(this, tr("NovelWriter"), tr("The current scene could not be saved. Quit anyway?")) ==
+    if (m_planRequest) {
+        m_planRequest->abort(); // the unfinished plan is discarded; the previous plan stays saved
+        m_planRequest->deleteLater();
+    }
+    if (saveAll() ||
+        QMessageBox::question(this, tr("NovelWriter"), tr("Some changes could not be saved. Quit anyway?")) ==
             QMessageBox::Yes) {
         event->accept();
     } else {
@@ -652,7 +707,7 @@ bool MainWindow::saveCurrentScene()
         return true;
     }
     if (!attempt(tr("Could not save the scene."),
-                 [&] { m_store->setSceneText(*m_currentScene, m_editor->toPlainText().toStdString()); })) {
+                 [&] { m_store->setSceneText(*m_currentScene, editorText(m_editor).toStdString()); })) {
         return false;
     }
     m_editor->document()->setModified(false);
@@ -665,9 +720,327 @@ void MainWindow::onTextChanged()
     if (m_loading || !m_currentScene) {
         return;
     }
-    m_sceneWords[*m_currentScene] = countWords(m_editor->toPlainText());
+    m_sceneWords[*m_currentScene] = countWords(editorText(m_editor));
     m_autosaveTimer->start();
     updateStatus();
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Synopsis and plan views
+// ---------------------------------------------------------------------------------------------------
+
+QWidget *MainWindow::buildSynopsisView()
+{
+    auto *view = new QWidget(this);
+    auto *hint = new QLabel(tr("Write or paste the synopsis of your novel. It is saved exactly as written."), view);
+    hint->setWordWrap(true);
+
+    m_synopsisEdit = makeTextEditor(view);
+    m_synopsisEdit->setObjectName("synopsisEdit");
+    m_synopsisTimer = makeAutosaveTimer(this);
+
+    m_synopsisStatus = new QLabel(view);
+    m_synopsisStatus->setObjectName("synopsisStatus");
+    m_synopsisStatus->setWordWrap(true);
+    m_generateButton = new QPushButton(tr("Generate Plan"), view);
+    m_generateButton->setObjectName("generatePlanButton");
+    m_generateButton->setToolTip(tr("Use the planner model to create a plan for the novel from this synopsis"));
+
+    auto *bottom = new QHBoxLayout;
+    bottom->addWidget(m_synopsisStatus, 1);
+    bottom->addWidget(m_generateButton);
+
+    auto *layout = new QVBoxLayout(view);
+    layout->addWidget(hint);
+    layout->addWidget(m_synopsisEdit, 1);
+    layout->addLayout(bottom);
+
+    connect(m_synopsisEdit, &QPlainTextEdit::textChanged, this, [this] {
+        if (!m_loading) {
+            // Own flag: the document's modified flag is reset by setPlainText() even though the text changed.
+            m_synopsisDirty = true;
+            m_synopsisTimer->start();
+        }
+    });
+    connect(m_synopsisTimer, &QTimer::timeout, this, &MainWindow::saveSynopsis);
+    connect(m_generateButton, &QPushButton::clicked, this, &MainWindow::generatePlan);
+    return view;
+}
+
+QWidget *MainWindow::buildPlanView()
+{
+    auto *view = new QWidget(this);
+    m_planStatus = new QLabel(view);
+    m_planStatus->setObjectName("planStatus");
+    m_planStatus->setWordWrap(true);
+    m_stopButton = new QPushButton(tr("Stop"), view);
+    m_stopButton->setObjectName("stopPlanButton");
+    m_stopButton->setToolTip(tr("Stop generating and keep what has been written so far"));
+    m_stopButton->hide();
+
+    auto *top = new QHBoxLayout;
+    top->addWidget(m_planStatus, 1);
+    top->addWidget(m_stopButton);
+
+    m_planEdit = makeTextEditor(view);
+    m_planEdit->setObjectName("planEdit");
+    new MarkdownHighlighter(m_planEdit->document());
+    m_planTimer = makeAutosaveTimer(this);
+
+    m_planRefresh = new QTimer(this);
+    m_planRefresh->setSingleShot(true);
+    m_planRefresh->setInterval(100);
+
+    auto *layout = new QVBoxLayout(view);
+    layout->addLayout(top);
+    layout->addWidget(m_planEdit, 1);
+
+    connect(m_planEdit, &QPlainTextEdit::textChanged, this, [this] {
+        if (!m_loading && !m_planRequest) {
+            m_planDirty = true;
+            m_planTimer->start();
+        }
+    });
+    connect(m_planTimer, &QTimer::timeout, this, &MainWindow::savePlan);
+    connect(m_planRefresh, &QTimer::timeout, this, [this] { showPlanText(m_pendingPlanText); });
+    connect(m_stopButton, &QPushButton::clicked, this, &MainWindow::stopPlanGeneration);
+    return view;
+}
+
+void MainWindow::loadSynopsisAndPlan()
+{
+    QString synopsis, plan;
+    if (m_store) {
+        attempt(tr("Could not load the synopsis and plan."), [&] {
+            synopsis = QString::fromStdString(m_store->synopsis());
+            plan = QString::fromStdString(m_store->plan());
+        });
+    }
+    m_synopsisTimer->stop();
+    m_planTimer->stop();
+    m_loading = true;
+    m_synopsisEdit->setPlainText(synopsis);
+    m_planEdit->setPlainText(plan);
+    m_loading = false;
+    m_synopsisDirty = false;
+    m_planDirty = false;
+
+    m_synopsisEdit->setEnabled(m_store != nullptr);
+    m_planEdit->setEnabled(m_store != nullptr);
+    m_synopsisEdit->setPlaceholderText(m_store ? tr("Once upon a time...")
+                                               : tr("Create or open a novel from the File menu first."));
+    m_planStatus->clear();
+    m_tabs->setTabVisible(m_tabs->indexOf(m_planView), !plan.isEmpty());
+    updatePlannerStatus();
+}
+
+bool MainWindow::saveSynopsis()
+{
+    m_synopsisTimer->stop();
+    if (!m_store || !m_synopsisDirty) {
+        return true;
+    }
+    if (!attempt(tr("Could not save the synopsis."),
+                 [&] { m_store->setSynopsis(editorText(m_synopsisEdit).toStdString()); })) {
+        return false;
+    }
+    m_synopsisDirty = false;
+    return true;
+}
+
+bool MainWindow::savePlan()
+{
+    m_planTimer->stop();
+    if (!m_store || m_planRequest || !m_planDirty) {
+        return true; // a plan being generated is saved when it is complete
+    }
+    if (!attempt(tr("Could not save the plan."), [&] { m_store->setPlan(editorText(m_planEdit).toStdString()); })) {
+        return false;
+    }
+    m_planDirty = false;
+    return true;
+}
+
+bool MainWindow::saveAll()
+{
+    const bool scene = saveCurrentScene();
+    const bool synopsis = saveSynopsis();
+    const bool plan = savePlan();
+    return scene && synopsis && plan;
+}
+
+void MainWindow::generatePlan()
+{
+    if (!m_store || m_planRequest || !saveSynopsis()) {
+        return;
+    }
+    const QString synopsis = editorText(m_synopsisEdit);
+    if (synopsis.trimmed().isEmpty()) {
+        QMessageBox::information(this, tr("Generate Plan"), tr("Write or paste a synopsis first."));
+        return;
+    }
+    const AiSettings settings = AiSettings::load();
+    const QUrl server = normalizeServerUrl(settings.serverUrl);
+    if (settings.plannerModel.isEmpty() || !server.isValid()) {
+        QMessageBox box(QMessageBox::Information, tr("Generate Plan"),
+                        tr("Choose an LM Studio server and a planner model in Settings first."), QMessageBox::Cancel,
+                        this);
+        QPushButton *open = box.addButton(tr("Open Settings..."), QMessageBox::AcceptRole);
+        box.exec();
+        if (box.clickedButton() == open) {
+            SettingsDialog dialog(this);
+            dialog.exec();
+            updatePlannerStatus();
+        }
+        return;
+    }
+    if (!editorText(m_planEdit).trimmed().isEmpty() &&
+        QMessageBox::question(this, tr("Generate Plan"),
+                              tr("Replace the current plan with a newly generated one?")) != QMessageBox::Yes) {
+        return;
+    }
+    if (!savePlan()) {
+        return;
+    }
+
+    m_planBeforeGeneration = editorText(m_planEdit);
+    m_planModel = settings.plannerModel;
+    m_planRequest = new ChatCompletion(server, m_planModel, PlanPrompt::messages(synopsis), PlanPrompt::kTemperature,
+                                       this);
+    connect(m_planRequest, &ChatCompletion::textChanged, this, [this](const QString &text) {
+        m_pendingPlanText = text;
+        if (!m_planRefresh->isActive()) {
+            m_planRefresh->start();
+        }
+    });
+    connect(m_planRequest, &ChatCompletion::thinking, this, [this] {
+        if (m_pendingPlanText.isEmpty()) {
+            m_planStatus->setText(tr("%1 is thinking...").arg(m_planModel));
+        }
+    });
+    connect(m_planRequest, &ChatCompletion::finished, this, &MainWindow::onPlanFinished);
+    connect(m_planRequest, &ChatCompletion::failed, this, &MainWindow::onPlanFailed);
+
+    m_pendingPlanText.clear();
+    showPlanText({});
+    setPlanGenerating(true);
+    m_planStatus->setText(
+        tr("Generating the plan with %1... (LM Studio may need a moment to load the model)").arg(m_planModel));
+    m_tabs->setTabVisible(m_tabs->indexOf(m_planView), true);
+    m_tabs->setCurrentWidget(m_planView);
+    m_planRequest->start();
+}
+
+void MainWindow::showPlanText(const QString &text)
+{
+    m_loading = true;
+    m_planEdit->setPlainText(text);
+    m_loading = false;
+    if (m_planRequest) {
+        m_planEdit->moveCursor(QTextCursor::End); // follow the text as it is written
+        m_planEdit->ensureCursorVisible();
+        if (!text.isEmpty()) {
+            m_planStatus->setText(tr("Writing the plan with %1... %n word(s) so far", nullptr,
+                                     int(countWords(text)))
+                                      .arg(m_planModel));
+        }
+    }
+}
+
+void MainWindow::setPlanGenerating(bool generating)
+{
+    m_planEdit->setReadOnly(generating);
+    m_stopButton->setVisible(generating);
+    m_generateButton->setEnabled(!generating && m_store != nullptr);
+    updatePlannerStatus();
+}
+
+void MainWindow::stopPlanGeneration()
+{
+    if (!m_planRequest) {
+        return;
+    }
+    m_planRequest->abort();
+    m_planRequest->deleteLater();
+    m_planRequest = nullptr;
+    m_planRefresh->stop();
+    setPlanGenerating(false);
+
+    if (m_pendingPlanText.trimmed().isEmpty()) {
+        showPlanText(m_planBeforeGeneration); // nothing written yet: keep the previous plan
+        m_planStatus->setText(tr("Stopped. The previous plan was kept."));
+        return;
+    }
+    // Keep the partial plan; the user asked for it to stop and may want to continue by hand.
+    showPlanText(m_pendingPlanText);
+    m_planDirty = true;
+    savePlan();
+    m_planStatus->setText(tr("Stopped. The plan is incomplete."));
+}
+
+void MainWindow::onPlanFinished(const QString &plan, bool truncated)
+{
+    m_planRequest->deleteLater();
+    m_planRequest = nullptr;
+    m_planRefresh->stop();
+    setPlanGenerating(false);
+    if (plan.trimmed().isEmpty()) {
+        // Nothing usable: keep the previous plan rather than replacing it with nothing.
+        showPlanText(m_planBeforeGeneration);
+        m_planDirty = false;
+    } else {
+        showPlanText(plan);
+        m_planDirty = true;
+        savePlan();
+    }
+    m_planEdit->moveCursor(QTextCursor::Start);
+
+    QString status = tr("Plan generated with %1. You can edit it here.").arg(m_planModel);
+    if (plan.trimmed().isEmpty() && truncated) {
+        // Typical for reasoning models: all tokens went into thinking.
+        status = tr("%1 reached its length limit before writing anything (it probably spent it all on "
+                    "reasoning). Increase the model's context length in LM Studio, or choose a non-reasoning "
+                    "planner model, and generate again.")
+                     .arg(m_planModel);
+    } else if (plan.trimmed().isEmpty()) {
+        status = tr("%1 returned an empty answer.").arg(m_planModel);
+    } else if (truncated) {
+        status += " " + tr("Warning: the answer was cut off because the model reached its length limit. Increase the "
+                           "model's context length in LM Studio and generate again.");
+    }
+    m_planStatus->setText(status);
+}
+
+void MainWindow::onPlanFailed(const QString &error)
+{
+    m_planRequest->deleteLater();
+    m_planRequest = nullptr;
+    m_planRefresh->stop();
+    setPlanGenerating(false);
+    showPlanText(m_planBeforeGeneration);
+    m_planDirty = false;
+    m_tabs->setTabVisible(m_tabs->indexOf(m_planView), !m_planBeforeGeneration.isEmpty());
+    m_planStatus->setText(tr("Plan generation failed."));
+    QMessageBox::warning(this, tr("Generate Plan"),
+                         tr("Could not generate the plan with %1:\n\n%2").arg(m_planModel, error));
+}
+
+void MainWindow::updatePlannerStatus()
+{
+    m_generateButton->setEnabled(m_store != nullptr && !m_planRequest);
+    if (m_planRequest) {
+        m_synopsisStatus->setText(tr("Generating the plan with %1...").arg(m_planModel));
+        return;
+    }
+    const QString model = AiSettings::load().plannerModel;
+    m_synopsisStatus->setText(model.isEmpty()
+                                  ? tr("No planner model chosen yet: set one in Edit > Settings.")
+                                  : tr("Planner model: %1").arg(model));
+}
+
+QPlainTextEdit *MainWindow::focusedEditor() const
+{
+    return qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
 }
 
 // ---------------------------------------------------------------------------------------------------
