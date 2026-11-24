@@ -28,11 +28,10 @@ conan install . -pr:a ./profiles/windows-msvc --build=missing
 build\Release\generators\conanbuild.bat
 cmake --preset conan-release
 cmake --build --preset conan-release
-
-:: Qt is built as shared libraries; conanrun.bat puts the Qt DLLs on PATH
-build\Release\generators\conanrun.bat
-build\Release\NovelWriter.exe
 ```
+
+Each build copies the Qt DLLs and plugins next to the executable (via `windeployqt`), so
+`build\Release\NovelWriter.exe` starts directly: double-click it, or run it from an IDE or debugger.
 
 If your Windows user folder contains a space (e.g. `C:\Users\First Last`), move Conan's package storage to a
 path without spaces first, since several dependency build tools break on spaces. Add this to
@@ -53,6 +52,16 @@ cmake --build --preset conan-release
 ```
 
 For a Debug build, run `conan install` again with `-s build_type=Debug` and use the `conan-debug` presets.
+
+### Distributable app
+
+```sh
+cmake --install build/Release --prefix dist
+```
+
+On Windows, `dist/` becomes a self-contained folder (Qt and the MSVC runtime included) that runs on machines
+without any SDKs. On macOS, the install step runs `macdeployqt` on `dist/NovelWriter.app` to bundle Qt (not yet
+tested). Linux packaging (e.g. AppImage) isn't set up yet; run the binary from the build tree there.
 
 ## Project layout
 
