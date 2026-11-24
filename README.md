@@ -162,6 +162,11 @@ LM Studio (`NOVELWRITER_LIVE_LMSTUDIO=http://127.0.0.1:1234`):
   (written to `NOVELWRITER_LIVE_PLAN_OUT` if set). With `NOVELWRITER_LIVE_REFINE_PLAN=<plan file>` and
   `NOVELWRITER_LIVE_REFINE_REQUEST="..."` it refines that plan through the plan chat instead.
 
+To see how plans are read into acts/chapters/scenes, run `planstructure_test` with
+`NOVELWRITER_PARSE_PLAN=<plan file>`, or with `NOVELWRITER_PARSE_NOVEL=<novel folder>` to check every plan in
+a novel (it flags briefs that swallowed a heading). Use a copy of the novel: opening it can write RocksDB
+housekeeping files.
+
 For a Debug build, run `conan install` again with `-s build_type=Debug` and use the `conan-debug` presets.
 
 ### Distributable app

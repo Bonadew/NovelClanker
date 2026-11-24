@@ -10,7 +10,7 @@ namespace {
 using Re = QRegularExpression;
 constexpr auto kCi = QRegularExpression::CaseInsensitiveOption;
 
-// "**Title**:" -> "Title"; removes emphasis markers and trailing separators.
+// "**Title**:" -> "Title"; removes emphasis markers and surrounding separators.
 QString cleanTitle(QString text)
 {
     text.remove(QStringLiteral("**"));
@@ -21,6 +21,13 @@ QString cleanTitle(QString text)
     static const Re leading(QStringLiteral(R"(^[\s:.\-–—]+)"));
     text.remove(leading);
     return text.trimmed();
+}
+
+// Removes a leading separator (": ", " - ", "— ") from text that follows a title.
+QString afterSeparator(QString text)
+{
+    static const Re leading(QStringLiteral(R"(^\s*(?:\*\*)?\s*[:.\-–—]?\s*)"));
+    return text.remove(leading).trimmed();
 }
 
 QString join(const QString &a, const QString &b)
@@ -47,69 +54,109 @@ Heading heading(const QString &line)
     return {};
 }
 
-// "Act 2: Title" / "Chapter 11.5 - Title" / "Scene 1: Title" -> number and title.
-bool numbered(const QString &text, const QString &word, QString &number, QString &title, QString *raw = nullptr)
+enum class Kind { None, Act, Chapter, Scene };
+
+// A line that starts an act, chapter or scene.
+struct Marker {
+    Kind kind = Kind::None;
+    QString number; // as written: "2", "IV", "11.5", "1.2"
+    QString title;  // may be empty
+    QString brief;  // text on the same line after the title; may be empty
+};
+
+// "Act 2", "Chapter 11.5", "Scene 1.2" at the start of `text` (optionally bold). Captures the kind word, the
+// number and the remainder.
+const Re &markerStart()
 {
-    const Re re(QStringLiteral(R"(^\s*(?:\*\*)?\s*%1\s+([0-9IVXLCivxlc]+(?:\.[0-9]+)?)\b\s*(?:[:.\-–—]\s*)?(.*)$)")
-                    .arg(word),
-                kCi);
-    const auto m = re.match(text);
-    if (!m.hasMatch()) {
-        return false;
-    }
-    number = m.captured(1);
-    title = cleanTitle(m.captured(2));
-    if (raw) {
-        *raw = m.captured(2).trimmed();
-    }
-    return true;
+    static const Re re(
+        QStringLiteral(R"(^\s*(\*\*)?\s*(Act|Chapter|Scene)\s+([0-9IVXLCivxlc]+(?:\.[0-9]+)*)\b(.*)$)"), kCi);
+    return re;
 }
 
-// A list item describing a scene. Returns false if the line isn't one.
-bool sceneItem(const QString &line, QString &title, QString &brief)
+// Splits "Title: what happens" / "Title - what happens" / "Title — what happens" into title and brief. A
+// remainder that reads like a description rather than a title becomes the brief.
+void splitTitle(const QString &rest, QString &title, QString &brief)
 {
-    static const Re item(QStringLiteral(R"(^\s*(?:[-*+]|\d+[.)])\s+(.*)$)"));
-    const auto m = item.match(line);
-    if (!m.hasMatch()) {
-        return false;
-    }
-    const QString body = m.captured(1).trimmed();
-    QString number;
-    if (body.startsWith(QStringLiteral("**"))) {
-        // - **Scene 1: Title**: brief
-        const qsizetype close = body.indexOf(QStringLiteral("**"), 2);
-        if (close < 0) {
-            return false;
-        }
-        if (!numbered(body.mid(2, close - 2), QStringLiteral("Scene"), number, title)) {
-            return false;
-        }
-        // The separator after the bold part (": ", " - ", ...) isn't part of the brief.
-        static const Re leadingSep(QStringLiteral(R"(^[:.\-–—]\s*)"));
-        brief = body.mid(close + 2).trimmed().remove(leadingSep).trimmed();
+    static const Re split(QStringLiteral(R"(^(.*?)(?:\s*[:—–]\s+|\s+-\s+)(.*)$)"));
+    if (const auto s = split.match(rest); s.hasMatch()) {
+        title = cleanTitle(s.captured(1));
+        brief = s.captured(2).trimmed();
     } else {
-        // - Scene 1: Title: brief   /   - Scene 1 - Title — brief
-        QString cleaned, rest;
-        if (!numbered(body, QStringLiteral("Scene"), number, cleaned, &rest)) {
-            return false;
-        }
-        static const Re split(QStringLiteral(R"(^(.*?)(?:\s*[:—–]\s+|\s+-\s+)(.*)$)"));
-        if (const auto s = split.match(rest); s.hasMatch()) {
-            title = cleanTitle(s.captured(1));
-            brief = s.captured(2).trimmed();
-        } else {
-            title = cleaned;
-            brief.clear();
-        }
+        title = cleanTitle(rest);
+        brief.clear();
     }
-    if (title.size() > 80) { // not a title but a description
-        brief = join(title, brief);
+    // "Scene 1.1: The keeper climbs the tower at dusk." has no title, only a description.
+    static const Re whitespace(QStringLiteral(R"(\s+)"));
+    const QString whole = rest.trimmed();
+    const bool sentence = whole.endsWith('.') || whole.endsWith('!') || whole.endsWith('?');
+    const qsizetype words = title.split(whitespace, Qt::SkipEmptyParts).size();
+    if (title.size() > 80 || (brief.isEmpty() && (sentence || words > 8))) {
+        brief = whole;
         title.clear();
     }
-    if (title.isEmpty()) {
-        title = QStringLiteral("Scene %1").arg(number);
+}
+
+// Recognises an act/chapter/scene marker written as a heading ("### Act 1: Title"), a bold line, a list item
+// ("- **Chapter 2 - Title**", "  - Scene 1.1: what happens", "1. Scene 3: Title: what happens") or a plain line
+// ("Chapter 2: Title").
+Marker marker(const QString &line)
+{
+    QString body;
+    bool fromHeading = false;
+    static const Re listItem(QStringLiteral(R"(^\s*(?:[-*+]|\d+[.)])\s+(.*)$)"));
+    if (const Heading h = heading(line); h.level > 0) {
+        body = h.text;
+        fromHeading = true;
+    } else if (const auto m = listItem.match(line); m.hasMatch()) {
+        body = m.captured(1);
+    } else {
+        body = line;
     }
-    return true;
+
+    const auto m = markerStart().match(body);
+    if (!m.hasMatch()) {
+        return {};
+    }
+    Marker result;
+    const QString word = m.captured(2).toLower();
+    result.kind = word == "act" ? Kind::Act : word == "chapter" ? Kind::Chapter : Kind::Scene;
+    result.number = m.captured(3);
+    QString rest = m.captured(4);
+
+    if (!m.captured(1).isEmpty()) {
+        // Bold: "**Scene 1: Title**: brief" / "**Chapter 2 - Title** - brief" / "**Scene 1:** brief"
+        const qsizetype close = rest.indexOf(QStringLiteral("**"));
+        const QString inside = close < 0 ? rest : rest.left(close);
+        const QString after = close < 0 ? QString() : afterSeparator(rest.mid(close + 2));
+        result.title = cleanTitle(inside);
+        result.brief = after;
+        if (result.title.size() > 80) {
+            result.brief = join(result.title, result.brief);
+            result.title.clear();
+        }
+    } else if (fromHeading && result.kind != Kind::Scene) {
+        // "### Act 1: Title" - the whole remainder is the title
+        result.title = cleanTitle(rest);
+    } else {
+        // Without markup a marker must be followed by a separator (or end the line): "- Chapter 2: Title" or
+        // "Chapter 2" is a marker, "- Chapter 2 is where it turns" is a sentence.
+        static const Re separatorNext(QStringLiteral(R"(^\s*([:.\-–—]|$))"));
+        if (!fromHeading && !separatorNext.match(rest).hasMatch()) {
+            return {};
+        }
+        splitTitle(afterSeparator(rest), result.title, result.brief);
+    }
+    if (result.title.size() > 80) {
+        result.brief = join(result.title, result.brief);
+        result.title.clear();
+    }
+    return result;
+}
+
+// "1.2" -> "2": scene numbers are often written as chapter.scene.
+QString lastNumber(const QString &number)
+{
+    return number.section('.', -1);
 }
 
 } // namespace
@@ -149,14 +196,17 @@ QList<Act> parse(const QString &plan)
         }
         return acts.last();
     };
+    const auto chapterCount = [&] {
+        int n = 0;
+        for (const Act &a : acts) {
+            n += static_cast<int>(a.chapters.size());
+        }
+        return n;
+    };
     const auto currentChapter = [&]() -> Chapter & {
         Act &act = currentAct();
         if (act.chapters.isEmpty()) {
-            int number = 1;
-            for (const Act &a : acts) {
-                number += static_cast<int>(a.chapters.size());
-            }
-            act.chapters.append({QStringLiteral("Chapter %1").arg(number), {}, {}});
+            act.chapters.append({QStringLiteral("Chapter %1").arg(chapterCount() + 1), {}, {}});
         }
         return act.chapters.last();
     };
@@ -169,33 +219,35 @@ QList<Act> parse(const QString &plan)
             }
             continue;
         }
-        QString number, title, brief;
-        if (const Heading h = heading(line); h.level > 0) {
-            if (numbered(h.text, QStringLiteral("Act"), number, title)) {
-                acts.append({title.isEmpty() ? QStringLiteral("Act %1").arg(number)
-                                             : QStringLiteral("Act %1: %2").arg(number, title),
-                             {}, {}});
-                target = Target::Act;
-            } else if (numbered(h.text, QStringLiteral("Chapter"), number, title)) {
-                currentAct().chapters.append({title.isEmpty() ? QStringLiteral("Chapter %1").arg(number)
-                                                              : QStringLiteral("Chapter %1: %2").arg(number, title),
-                                              {}, {}});
-                target = Target::Chapter;
-            } else if (numbered(h.text, QStringLiteral("Scene"), number, title)) {
-                currentChapter().scenes.append({title.isEmpty() ? QStringLiteral("Scene %1").arg(number) : title, {}});
-                target = Target::Scene;
-            } else {
-                target = Target::None; // some other heading inside the structure
-            }
+        const Marker m = marker(line);
+        switch (m.kind) {
+        case Kind::Act:
+            acts.append({m.title.isEmpty() ? QStringLiteral("Act %1").arg(m.number)
+                                           : QStringLiteral("Act %1: %2").arg(m.number, m.title),
+                         m.brief, {}});
+            target = Target::Act;
             continue;
-        }
-        if (sceneItem(line, title, brief)) {
-            currentChapter().scenes.append({title, brief});
+        case Kind::Chapter:
+            currentAct().chapters.append({m.title.isEmpty() ? QStringLiteral("Chapter %1").arg(m.number)
+                                                            : QStringLiteral("Chapter %1: %2").arg(m.number, m.title),
+                                          m.brief, {}});
+            target = Target::Chapter;
+            continue;
+        case Kind::Scene:
+            currentChapter().scenes.append(
+                {m.title.isEmpty() ? QStringLiteral("Scene %1").arg(lastNumber(m.number)) : m.title, m.brief});
             target = Target::Scene;
+            continue;
+        case Kind::None:
+            break;
+        }
+        if (heading(line).level > 0) {
+            target = Target::None; // some other heading inside the structure
             continue;
         }
         // Plain text: the brief of the act/chapter/scene above it.
-        const QString text = line.trimmed();
+        static const Re bullet(QStringLiteral(R"(^[-*+]\s+)"));
+        const QString text = line.trimmed().remove(bullet);
         switch (target) {
         case Target::Act:
             acts.last().brief = join(acts.last().brief, text);
@@ -205,8 +257,7 @@ QList<Act> parse(const QString &plan)
             break;
         case Target::Scene: {
             Scene &scene = acts.last().chapters.last().scenes.last();
-            static const Re bullet(QStringLiteral(R"(^[-*+]\s+)"));
-            scene.brief = join(scene.brief, QString(text).remove(bullet));
+            scene.brief = join(scene.brief, text);
             break;
         }
         case Target::None:

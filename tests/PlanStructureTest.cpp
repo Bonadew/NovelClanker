@@ -1,10 +1,12 @@
 // Tests for PlanStructure::parse(). Optional: set NOVELWRITER_PARSE_PLAN=<plan file> to print what a real
 // plan parses into.
 
+#include "NovelStore.h"
 #include "PlanStructure.h"
 
 #include <QCoreApplication>
 #include <QFile>
+#include <QRegularExpression>
 
 #include <cstdio>
 #include <cstdlib>
@@ -146,6 +148,67 @@ void testImplicitParents()
     EXPECT(acts[0].chapters[0].scenes[0].title == "Scene 1" && acts[0].chapters[0].scenes[0].brief.size() == 100);
 }
 
+// Regression: chapters written as list items (as mn-12b-mag-mell-r1 does) were not recognised, so each one was
+// appended to the brief of the scene before it, and the first one in an act to the act's brief.
+void testChaptersAsListItems()
+{
+    const QString plan = "# Harbour Lights\n\n"
+                         "### Act 1: Arrival (Settling In)\n"
+                         "- **Chapter 1 - Maps and Memories**\n"
+                         "  - Scene 1.1: Elin unpacks her instruments in the keeper's cottage.\n"
+                         "  - Scene 1.2: She finds her father's charts, annotated in a hand she knows.\n"
+                         "- **Chapter 2 - The Old Lighthouse**\n"
+                         "  - Scene 2.1: Elin climbs the tower and counts the missing panes.\n"
+                         "\n"
+                         "### Act 2: Storms\n"
+                         "- **Chapter 3 - Warnings**: Elin hears the forecast.\n"
+                         "  - Scene 3.1: The harbour master urges her to leave before the gale.\n"
+                         "- Chapter 4: Night Watch\n"
+                         "  - Scene 4.1: The lamp fails at midnight.\n"
+                         "Chapter 5: Plain line\n"
+                         "- **Scene 1:** POV: Elin. Setting: the lantern room, dawn.\n"
+                         "- Chapter 5 is where everything turns.\n";
+    const QList<Act> acts = parse(plan);
+    EXPECT(outline(acts) == "Act 1: Arrival (Settling In)[Chapter 1: Maps and Memories(Scene 1,Scene 2),"
+                            "Chapter 2: The Old Lighthouse(Scene 1)] "
+                            "Act 2: Storms[Chapter 3: Warnings(Scene 1),Chapter 4: Night Watch(Scene 1),"
+                            "Chapter 5: Plain line(Scene 1)]");
+    EXPECT(acts.size() == 2 && acts[0].brief.isEmpty()); // the first chapter didn't end up in the act's brief
+    // No brief contains the next chapter's heading.
+    for (const Act &act : acts) {
+        for (const Chapter &chapter : act.chapters) {
+            for (const Scene &scene : chapter.scenes) {
+                EXPECT(!scene.brief.contains(QRegularExpression(QStringLiteral(R"(Chapter \d+\s*[:\-])"))));
+            }
+        }
+    }
+    EXPECT(acts[0].chapters[0].scenes[1].brief == "She finds her father's charts, annotated in a hand she knows.");
+    EXPECT(acts[0].chapters[1].scenes[0].brief == "Elin climbs the tower and counts the missing panes.");
+    EXPECT(acts[1].chapters[0].brief == "Elin hears the forecast.");
+    // "- Chapter 5 is where..." is a sentence, not a chapter: it continues the scene's brief.
+    EXPECT(acts[1].chapters[2].scenes.size() == 1);
+    EXPECT(acts[1].chapters[2].scenes[0].brief ==
+           "POV: Elin. Setting: the lantern room, dawn. Chapter 5 is where everything turns.");
+}
+
+// A last scene directly followed by the next chapter or act, without a blank line, in each notation.
+void testSceneBeforeNextHeading()
+{
+    for (const QString &next : {QString("#### Chapter 2: Next"), QString("**Chapter 2: Next**"),
+                                QString("- **Chapter 2 - Next**"), QString("- Chapter 2: Next"),
+                                QString("Chapter 2: Next"), QString("  * **Chapter 2: Next**: purpose")}) {
+        const QString plan = "### Act 1: A\n#### Chapter 1: First\n"
+                             "- **Scene 1: Last**: The last scene of chapter 1.\n" +
+                             next + "\n- **Scene 1: Opening**: The first scene of chapter 2.\n";
+        const QList<Act> acts = parse(plan);
+        EXPECT(outline(acts) == "Act 1: A[Chapter 1: First(Last),Chapter 2: Next(Opening)]");
+        EXPECT(acts[0].chapters[0].scenes[0].brief == "The last scene of chapter 1.");
+    }
+    const QList<Act> acts = parse("#### Chapter 1: First\n- **Scene 1: Last**: The end.\n- **Act 2: Next**\n");
+    EXPECT(outline(acts) == "Act 1[Chapter 1: First(Last)] Act 2: Next[]");
+    EXPECT(acts[0].chapters[0].scenes[0].brief == "The end.");
+}
+
 void testNothingToFind()
 {
     EXPECT(parse("").isEmpty());
@@ -172,6 +235,45 @@ void printRealPlan()
         std::printf("%s\n", qPrintable(act.title));
         for (const Chapter &chapter : act.chapters) {
             std::printf("  %s (%lld scenes)\n", qPrintable(chapter.title), static_cast<long long>(chapter.scenes.size()));
+            for (const Scene &scene : chapter.scenes) {
+                std::printf("    %s | %s\n", qPrintable(scene.title), qPrintable(scene.brief.left(70)));
+            }
+        }
+    }
+}
+
+// Optional: set NOVELWRITER_PARSE_NOVEL=<novel folder> to parse every plan in a novel and report briefs that
+// look like they swallowed a heading (use a copy: opening a novel may write RocksDB housekeeping files).
+void checkNovelPlans()
+{
+    const QString path = qEnvironmentVariable("NOVELWRITER_PARSE_NOVEL");
+    if (path.isEmpty()) {
+        return;
+    }
+    NovelStore store(std::filesystem::path(path.toStdU16String()), NovelStore::Mode::Open);
+    static const QRegularExpression heading(QStringLiteral(R"(\b(Act|Chapter)\s+[0-9IVX]+)"),
+                                            QRegularExpression::CaseInsensitiveOption);
+    const QString dumpDir = qEnvironmentVariable("NOVELWRITER_DUMP_PLANS"); // optional: write each plan's text here
+    for (const auto &plan : store.plans()) {
+        if (!dumpDir.isEmpty()) {
+            QFile out(dumpDir + "/" + QString::fromStdString(plan.title) + ".md");
+            if (out.open(QIODevice::WriteOnly)) {
+                out.write(store.planText(plan.id).c_str());
+            }
+        }
+        const QList<Act> acts = parse(QString::fromStdString(store.planText(plan.id)));
+        const Counts c = count(acts);
+        std::printf("Plan \"%s\" (%s): %d acts, %d chapters, %d scenes\n", plan.title.c_str(),
+                    plan.model.empty() ? "by hand" : plan.model.c_str(), c.acts, c.chapters, c.scenes);
+        for (const Act &act : acts) {
+            for (const Chapter &chapter : act.chapters) {
+                for (const Scene &scene : chapter.scenes) {
+                    if (heading.match(scene.brief).hasMatch()) {
+                        std::printf("  SUSPICIOUS brief in %s / %s / %s:\n    %s\n", qPrintable(act.title),
+                                    qPrintable(chapter.title), qPrintable(scene.title), qPrintable(scene.brief));
+                    }
+                }
+            }
         }
     }
 }
@@ -184,8 +286,11 @@ int main(int argc, char **argv)
     testPromptFormat();
     testVariations();
     testImplicitParents();
+    testChaptersAsListItems();
+    testSceneBeforeNextHeading();
     testNothingToFind();
     printRealPlan();
+    checkNovelPlans();
     if (g_failures == 0) {
         std::puts("All PlanStructure tests passed.");
     }

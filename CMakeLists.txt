@@ -170,7 +170,7 @@ if(BUILD_TESTING)
     add_test(NAME chat COMMAND chat_test)
 
     add_executable(planstructure_test tests/PlanStructureTest.cpp)
-    target_link_libraries(planstructure_test PRIVATE novelai)
+    target_link_libraries(planstructure_test PRIVATE novelai novelstore)
     novelwriter_warnings(planstructure_test)
     add_test(NAME planstructure COMMAND planstructure_test)
 
