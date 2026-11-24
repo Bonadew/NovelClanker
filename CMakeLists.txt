@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Widgets)
 find_package(RocksDB REQUIRED)
 
 function(novelwriter_warnings target)
@@ -27,6 +27,18 @@ target_include_directories(novelstore PUBLIC src)
 target_link_libraries(novelstore PRIVATE RocksDB::rocksdb)
 novelwriter_warnings(novelstore)
 
+# AI integration (LM Studio client, AI settings). Qt Core/Network only, so it can be tested without widgets.
+add_library(novelai STATIC
+    src/AiSettings.cpp
+    src/AiSettings.h
+    src/LmStudioClient.cpp
+    src/LmStudioClient.h
+)
+target_include_directories(novelai PUBLIC src)
+target_link_libraries(novelai PUBLIC Qt6::Core Qt6::Network)
+set_target_properties(novelai PROPERTIES AUTOMOC ON)
+novelwriter_warnings(novelai)
+
 add_executable(novelwriter WIN32 MACOSX_BUNDLE
     src/main.cpp
     src/MainWindow.cpp
@@ -35,8 +47,10 @@ add_executable(novelwriter WIN32 MACOSX_BUNDLE
     src/MarkdownHighlighter.h
     src/NovelTree.cpp
     src/NovelTree.h
+    src/SettingsDialog.cpp
+    src/SettingsDialog.h
 )
-target_link_libraries(novelwriter PRIVATE novelstore Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(novelwriter PRIVATE novelstore novelai Qt6::Core Qt6::Gui Qt6::Widgets)
 novelwriter_warnings(novelwriter)
 
 set_target_properties(novelwriter PROPERTIES
@@ -58,8 +72,8 @@ if(WIN32)
     find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${QT_BIN_DIR}" NO_DEFAULT_PATH REQUIRED)
     set(_windeployqt_args
         --no-translations --no-system-d3d-compiler --no-system-dxc-compiler --no-opengl-sw
-        # qtuiotouchplugin would drag in Qt Network plus its TLS/network plugins. Note: windeployqt ignores
-        # --exclude-plugins when run with --verbose 0, so keep the default verbosity.
+        # TUIO touch input isn't needed. Note: windeployqt ignores --exclude-plugins when run with
+        # --verbose 0, so keep the default verbosity.
         --exclude-plugins qtuiotouchplugin)
 
     add_custom_command(TARGET novelwriter POST_BUILD
@@ -122,4 +136,24 @@ if(BUILD_TESTING)
     target_link_libraries(novelstore_test PRIVATE novelstore)
     novelwriter_warnings(novelstore_test)
     add_test(NAME novelstore COMMAND novelstore_test "${CMAKE_CURRENT_BINARY_DIR}/test-data")
+
+    add_executable(lmstudio_test tests/LmStudioClientTest.cpp)
+    target_link_libraries(lmstudio_test PRIVATE novelai)
+    novelwriter_warnings(lmstudio_test)
+    add_test(NAME lmstudio COMMAND lmstudio_test)
+
+    add_executable(settings_test tests/SettingsDialogTest.cpp src/SettingsDialog.cpp src/SettingsDialog.h)
+    target_link_libraries(settings_test PRIVATE novelai Qt6::Widgets)
+    set_target_properties(settings_test PROPERTIES AUTOMOC ON)
+    novelwriter_warnings(settings_test)
+    add_test(NAME settings COMMAND settings_test)
+    # Headless: Qt's "minimal" platform never shows a window.
+    set_tests_properties(settings PROPERTIES ENVIRONMENT
+        "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${QT_BIN_DIR}/../plugins")
+
+    if(WIN32)
+        # Find the Qt DLLs without relying on windeployqt having run.
+        set_tests_properties(lmstudio settings PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${QT_BIN_DIR}")
+    endif()
 endif()

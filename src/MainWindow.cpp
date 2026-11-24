@@ -2,6 +2,7 @@
 
 #include "MarkdownHighlighter.h"
 #include "NovelTree.h"
+#include "SettingsDialog.h"
 
 #include <QAction>
 #include <QCloseEvent>
@@ -207,6 +208,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     editMenu->addAction(tr("Cu&t"), QKeySequence::Cut, m_editor, &QPlainTextEdit::cut);
     editMenu->addAction(tr("&Copy"), QKeySequence::Copy, m_editor, &QPlainTextEdit::copy);
     editMenu->addAction(tr("&Paste"), QKeySequence::Paste, m_editor, &QPlainTextEdit::paste);
+    editMenu->addSeparator();
+    QAction *settingsAction = editMenu->addAction(tr("&Settings..."), QKeySequence::Preferences, this, [this] {
+        SettingsDialog dialog(this);
+        dialog.exec();
+    });
+    settingsAction->setMenuRole(QAction::PreferencesRole); // macOS: app menu "Settings..."
 
     QMenu *structureMenu = menuBar()->addMenu(tr("&Structure"));
     structureMenu->addAction(m_addActAction);

@@ -20,6 +20,12 @@ Runs on Windows, Linux, and macOS.
 - **File → Export as Markdown...** writes the whole novel to a single `.md` file: acts and chapters become
   `#`/`##` headings, scenes are separated by `* * *`.
 
+- **Edit → Settings...** sets the address of an [LM Studio](https://lmstudio.ai) server (default
+  `http://127.0.0.1:1234`; addresses like `127.0.0.1:1234` or `.../v1` are accepted). The settings view
+  connects to the server to list its models (embedding models are left out) in two dropdowns: one for the
+  **orchestrator/planner** model and one for the **prose writer** model. Use **Refresh** after starting
+  LM Studio's server. Settings are stored per user (QSettings), not in the novel.
+
 ## Storage
 
 A novel is a [RocksDB](https://rocksdb.org) database, i.e. a folder (conventionally named `*.novel`).
@@ -91,7 +97,9 @@ cmake --build --preset conan-release
 ./build/Release/NovelWriter      # macOS: open build/Release/NovelWriter.app
 ```
 
-Run the storage tests with `ctest --test-dir build/Release --output-on-failure`.
+Run the tests with `ctest --test-dir build/Release --output-on-failure`. They're self-contained (the LM Studio
+tests use a fake server and the settings view runs headless). To also check the settings view against a real
+LM Studio, set `NOVELWRITER_LIVE_LMSTUDIO=http://127.0.0.1:1234` and run `settings_test` directly.
 
 For a Debug build, run `conan install` again with `-s build_type=Debug` and use the `conan-debug` presets.
 
@@ -108,7 +116,7 @@ tested). Linux packaging (e.g. AppImage) isn't set up yet; run the binary from t
 ## Project layout
 
 ```
-conanfile.py              Conan dependencies (Qt 6 qtbase, RocksDB)
+conanfile.py              Conan dependencies (Qt 6 qtbase incl. Network, RocksDB)
 profiles/windows-msvc     Conan profile for Windows (MSVC, C++20, Ninja)
 CMakeLists.txt            Build definition
 src/main.cpp              Application entry point
@@ -116,5 +124,8 @@ src/MainWindow.*          Main window: structure tree + add buttons, scene edito
 src/NovelTree.*           Act/chapter/scene tree with hierarchy-aware drag and drop
 src/MarkdownHighlighter.* Live Markdown syntax highlighting (plain-text document)
 src/NovelStore.*          RocksDB novel storage (no Qt dependency)
-tests/NovelStoreTest.cpp  Storage tests (run via CTest)
+src/LmStudioClient.*      LM Studio client: fetches models (native REST API, with fallbacks)
+src/AiSettings.*          Server address and model choices (QSettings)
+src/SettingsDialog.*      Settings view
+tests/                    Storage, LM Studio client and settings view tests (run via CTest)
 ```
