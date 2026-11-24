@@ -1,0 +1,9 @@
+BasedOnStyle: LLVM
+AllowShortFunctionsOnASingleLine: Empty
+BraceWrapping:
+  AfterFunction: true
+BreakBeforeBraces: Custom
+ColumnLimit: 110
+InsertBraces: true
+InsertNewlineAtEOF: true
+SeparateDefinitionBlocks: Always

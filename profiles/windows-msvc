@@ -1,0 +1,13 @@
+[settings]
+os=Windows
+arch=x86_64
+compiler=msvc
+compiler.version=195
+compiler.runtime=dynamic
+compiler.cppstd=20
+build_type=Release
+
+[conf]
+# Ninja works with any CMake version; the Visual Studio 18 2026 generator needs CMake 4.2+.
+# Conan activates the MSVC developer environment (vcvars) automatically for Ninja builds.
+tools.cmake.cmaketoolchain:generator=Ninja
