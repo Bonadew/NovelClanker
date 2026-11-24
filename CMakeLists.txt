@@ -7,9 +7,25 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(CMAKE_AUTOMOC ON)
-
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(RocksDB REQUIRED)
+
+function(novelwriter_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endfunction()
+
+# Novel storage (RocksDB). Kept free of Qt so it can be tested on its own.
+add_library(novelstore STATIC
+    src/NovelStore.cpp
+    src/NovelStore.h
+)
+target_include_directories(novelstore PUBLIC src)
+target_link_libraries(novelstore PRIVATE RocksDB::rocksdb)
+novelwriter_warnings(novelstore)
 
 add_executable(novelwriter WIN32 MACOSX_BUNDLE
     src/main.cpp
@@ -18,16 +34,11 @@ add_executable(novelwriter WIN32 MACOSX_BUNDLE
     src/MarkdownHighlighter.cpp
     src/MarkdownHighlighter.h
 )
-
-target_link_libraries(novelwriter PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
-
-if(MSVC)
-    target_compile_options(novelwriter PRIVATE /W4 /permissive- /utf-8)
-else()
-    target_compile_options(novelwriter PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+target_link_libraries(novelwriter PRIVATE novelstore Qt6::Core Qt6::Gui Qt6::Widgets)
+novelwriter_warnings(novelwriter)
 
 set_target_properties(novelwriter PROPERTIES
+    AUTOMOC ON
     OUTPUT_NAME "NovelWriter"
     MACOSX_BUNDLE_GUI_IDENTIFIER "com.novelwriter.app"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
@@ -100,4 +111,13 @@ elseif(APPLE)
             COMMAND \"${MACDEPLOYQT_EXECUTABLE}\" \"\${CMAKE_INSTALL_PREFIX}/NovelWriter.app\"
             COMMAND_ERROR_IS_FATAL ANY)
     ")
+endif()
+
+# --- Tests ----------------------------------------------------------------------------------------------
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(novelstore_test tests/NovelStoreTest.cpp)
+    target_link_libraries(novelstore_test PRIVATE novelstore)
+    novelwriter_warnings(novelstore_test)
+    add_test(NAME novelstore COMMAND novelstore_test "${CMAKE_CURRENT_BINARY_DIR}/test-data")
 endif()

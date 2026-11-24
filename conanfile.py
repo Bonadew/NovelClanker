@@ -30,6 +30,8 @@ class NovelWriterConan(ConanFile):
         # harfbuzz's glib integration drags in glib -> gettext -> libiconv (autotools builds that are
         # slow and break on Windows paths with spaces). Qt doesn't need it.
         "harfbuzz/*:with_glib": False,
+        # Novel storage. LZ4 gives cheap compression for prose.
+        "rocksdb/*:with_lz4": True,
     }
 
     def configure(self):
@@ -42,6 +44,7 @@ class NovelWriterConan(ConanFile):
 
     def requirements(self):
         self.requires("qt/6.8.5")
+        self.requires("rocksdb/11.1.1")
 
     def layout(self):
         cmake_layout(self)

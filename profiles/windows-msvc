@@ -11,3 +11,7 @@ build_type=Release
 # Ninja works with any CMake version; the Visual Studio 18 2026 generator needs CMake 4.2+.
 # Conan activates the MSVC developer environment (vcvars) automatically for Ninja builds.
 tools.cmake.cmaketoolchain:generator=Ninja
+# RocksDB takes file paths as std::string; make it treat them as UTF-8 (not the ANSI code page) so
+# novels can live in folders with non-ASCII names.
+# (Must be a cache variable: RocksDB's option() ignores normal variables under its CMake policy settings.)
+rocksdb/*:tools.cmake.cmaketoolchain:extra_variables={"WITH_WINDOWS_UTF8_FILENAMES": {"value": "ON", "cache": True, "type": "BOOL"}}
