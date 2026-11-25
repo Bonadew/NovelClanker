@@ -1,6 +1,16 @@
 #include "MarkdownHighlighter.h"
 
+#include "Theme.h"
+
+#include <QApplication>
+#include <QEvent>
 #include <QFontDatabase>
+
+namespace {
+// Indexes into m_inlineRules for the rules whose colour depends on the theme.
+constexpr std::size_t kCodeRule = 3;
+constexpr std::size_t kLinkRule = 4;
+} // namespace
 
 MarkdownHighlighter::MarkdownHighlighter(QTextDocument *parent) : QSyntaxHighlighter(parent)
 {
@@ -8,20 +18,12 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *parent) : QSyntaxHighlig
     for (int i = 0; i < 6; ++i) {
         m_headingFormats[i].setFontWeight(QFont::Bold);
         m_headingFormats[i].setFontPointSize(parent->defaultFont().pointSizeF() * headingScale[i]);
-        m_headingFormats[i].setForeground(QColor(0x2a, 0x5d, 0x9f));
     }
 
-    m_quoteFormat.setForeground(QColor(0x6a, 0x73, 0x7d));
     m_quoteFormat.setFontItalic(true);
-
-    m_listFormat.setForeground(QColor(0xb0, 0x5a, 0x00));
     m_listFormat.setFontWeight(QFont::Bold);
-
     const QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     m_codeFormat.setFontFamilies(mono.families());
-    m_codeFormat.setForeground(QColor(0x8a, 0x2b, 0x8a));
-
-    m_ruleFormat.setForeground(QColor(0x99, 0x99, 0x99));
 
     QTextCharFormat bold;
     bold.setFontWeight(QFont::Bold);
@@ -30,16 +32,46 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *parent) : QSyntaxHighlig
     QTextCharFormat strike;
     strike.setFontStrikeOut(true);
     QTextCharFormat link;
-    link.setForeground(QColor(0x1a, 0x73, 0xe8));
     link.setFontUnderline(true);
 
     m_inlineRules = {
         {QRegularExpression(R"((\*\*|__)(?=\S)(.+?)(?<=\S)\1)"), bold},
         {QRegularExpression(R"((?<![\*_])([\*_])(?=\S)(.+?)(?<=\S)\1(?![\*_]))"), italic},
         {QRegularExpression(R"(~~(?=\S)(.+?)(?<=\S)~~)"), strike},
-        {QRegularExpression(R"(`[^`]+`)"), m_codeFormat},
-        {QRegularExpression(R"(\[[^\]]*\]\([^\)]*\))"), link},
+        {QRegularExpression(R"(`[^`]+`)"), m_codeFormat},       // kCodeRule
+        {QRegularExpression(R"(\[[^\]]*\]\([^\)]*\))"), link}, // kLinkRule
     };
+    updateColors();
+    qApp->installEventFilter(this); // follow switches between light and dark mode
+}
+
+void MarkdownHighlighter::updateColors()
+{
+    const bool dark = Theme::isDark(QApplication::palette());
+    const QColor heading = dark ? QColor(0x7a, 0xb4, 0xff) : QColor(0x2a, 0x5d, 0x9f);
+    const QColor quote = dark ? QColor(0xa0, 0xa8, 0xb0) : QColor(0x6a, 0x73, 0x7d);
+    const QColor list = dark ? QColor(0xf0, 0xa0, 0x50) : QColor(0xb0, 0x5a, 0x00);
+    const QColor code = dark ? QColor(0xd8, 0x9a, 0xe8) : QColor(0x8a, 0x2b, 0x8a);
+    const QColor rule = dark ? QColor(0x80, 0x80, 0x80) : QColor(0x99, 0x99, 0x99);
+    const QColor link = dark ? QColor(0x6c, 0xb0, 0xff) : QColor(0x1a, 0x73, 0xe8);
+    for (QTextCharFormat &format : m_headingFormats) {
+        format.setForeground(heading);
+    }
+    m_quoteFormat.setForeground(quote);
+    m_listFormat.setForeground(list);
+    m_codeFormat.setForeground(code);
+    m_ruleFormat.setForeground(rule);
+    m_inlineRules[kCodeRule].format.setForeground(code);
+    m_inlineRules[kLinkRule].format.setForeground(link);
+}
+
+bool MarkdownHighlighter::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == qApp && event->type() == QEvent::ApplicationPaletteChange) {
+        updateColors();
+        rehighlight();
+    }
+    return QSyntaxHighlighter::eventFilter(watched, event);
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text)

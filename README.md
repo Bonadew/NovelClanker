@@ -3,6 +3,30 @@
 A cross-platform Markdown-style editor for writing novels, built with C++20 and Qt 6 Widgets.
 Runs on Windows, Linux, and macOS.
 
+A synopsis becomes plans, then the manuscript the author writes:
+
+```mermaid
+flowchart LR
+    synopsis["<b>Synopsis</b><br/>written or<br/>pasted in"]
+    plans["<b>Plans</b><br/>one or more,<br/>each with model"]
+    refine["<b>Refine</b><br/>edit by hand<br/>or chat"]
+    manuscript["<b>Manuscript</b><br/>acts, chapters,<br/>scenes, briefs"]
+    scenes["<b>Scenes</b><br/>author writes<br/>the prose"]
+    prose["<b>Prose writer</b><br/>Write Scene,<br/>Expand"]
+
+    synopsis -- Generate Plan --> plans
+    plans --> refine
+    refine -- revised plan --> plans
+    refine -- Create Structure --> manuscript
+    manuscript --> scenes
+    prose -. drafts .-> scenes
+
+    classDef focus fill:#e3effb,stroke:#2f74d0,stroke-width:2px
+    classDef helper stroke-dasharray: 5 5
+    class plans focus
+    class prose helper
+```
+
 ## Using it
 
 - **File → New Novel...** creates a novel (with Act 1 / Chapter 1 / Scene 1), **File → Open Novel...** opens
@@ -25,6 +49,9 @@ Runs on Windows, Linux, and macOS.
   connects to the server to list its models (embedding models are left out) in two dropdowns: one for the
   **orchestrator/planner** model and one for the **prose writer** model. Use **Refresh** after starting
   LM Studio's server. Settings are stored per user (QSettings), not in the novel.
+- **View → Theme** switches between light and dark mode: **System** follows the operating system, **Light** and
+  **Dark** always use that scheme (the same on every platform). **Switch Light/Dark** (**Ctrl+Shift+D**) flips to
+  the other one. The choice is remembered.
 
 - The **Synopsis** tab holds the novel's synopsis: write or paste it there. It is stored exactly as written.
 - A novel can have **several plans**, listed on the **Plan** tab with the model that generated each one, or
@@ -95,40 +122,9 @@ questions. The plan has a fixed Markdown shape that mirrors the app's acts, chap
 
 ## Storage
 
-A novel is a [RocksDB](https://rocksdb.org) database, i.e. a folder (conventionally named `*.novel`).
-**Every scene's text is a separate entry**; acts and chapters only hold a title and the ordered ids of their
-children, so restructuring never rewrites scene text. Ids are unique across all kinds and never reused;
-`<id>` is zero-padded to 20 digits:
-
-| Key                   | Value                                   |
-|-----------------------|-----------------------------------------|
-| `novel/format`        | format version (`3`)                    |
-| `novel/next_id`       | next unused id                          |
-| `novel/acts`          | act ids in order, comma-separated       |
-| `act/<id>/title`      | act title                               |
-| `act/<id>/chapters`   | chapter ids in order                    |
-| `act/<id>/brief`      | what the act is for (optional)          |
-| `chapter/<id>/title`  | chapter title                           |
-| `chapter/<id>/scenes` | scene ids in order                      |
-| `chapter/<id>/brief`  | what the chapter is for (optional)      |
-| `scene/<id>/title`    | scene title                             |
-| `scene/<id>/text`     | scene Markdown                          |
-| `scene/<id>/brief`    | what happens in the scene (optional)    |
-| `novel/synopsis`      | synopsis, exactly as written (optional) |
-| `novel/plan_model`    | planner model override (optional)       |
-| `novel/plan_template` | plan template (optional; default three acts) |
-| `novel/plans`         | plan ids in order                       |
-| `plan/<id>/title`     | plan title                              |
-| `plan/<id>/text`      | plan Markdown                           |
-| `plan/<id>/model`     | generating model; absent if by hand     |
-| `plan/<id>/template`  | template it was generated with (optional) |
-| `plan/<id>/chat`      | conversation about the plan (JSON)      |
-
-Novels from earlier versions (format 2, with a single `novel/plan`) are upgraded when opened: that plan
-becomes "Plan 1". Its model wasn't recorded then, so it shows as "(by hand)".
-
-Writes are synced to disk and multi-key changes are atomic (RocksDB write batches). RocksDB locks an open
-novel, so only one NovelWriter can have it open at a time. See `src/NovelStore.h`.
+A novel is a [RocksDB](https://rocksdb.org) database folder (conventionally named `*.novel`) in which every
+scene's text is a separate entry. The keys, format versions and upgrades are described in
+[docs/storage-format.md](docs/storage-format.md).
 
 ## Requirements
 
@@ -261,29 +257,4 @@ tested). Linux packaging (e.g. AppImage) isn't set up yet; run the binary from t
 
 ## Project layout
 
-```
-docs/requirements.sdoc    Software requirements specification (StrictDoc)
-strictdoc_config.py       StrictDoc project configuration
-tools/requirements-docs.txt  Documentation tooling (StrictDoc), installed into .venv
-build.bat                 Windows: builds everything and creates the double-clickable dist\ folder
-conanfile.py              Conan dependencies (Qt 6 qtbase incl. Network, RocksDB)
-profiles/windows-msvc     Conan profile for Windows (MSVC, C++20, Ninja)
-CMakeLists.txt            Build definition
-src/main.cpp              Application entry point
-src/MainWindow.*          Main window: Manuscript/Synopsis/Plan tabs, structure tree, editors, autosave
-src/NovelTree.*           Act/chapter/scene tree with hierarchy-aware drag and drop
-src/MarkdownHighlighter.* Live Markdown syntax highlighting (plain-text document)
-src/NovelStore.*          RocksDB novel storage (no Qt dependency)
-src/LmStudioClient.*      LM Studio client: fetches models (native REST API, with fallbacks)
-src/AiSettings.*          Server address and model choices (QSettings)
-src/SettingsDialog.*      Settings view
-src/ModelCombo.*          Model dropdowns (shared by Settings and Synopsis views)
-src/LmChat.*              Streamed chat completions (OpenAI-compatible), reasoning removal
-src/PlanPrompt.*          The prompt that turns a synopsis into a plan
-src/PlanChat.*            Plan refinement chat: prompt, reply parsing, history
-src/PlanChatPanel.*       The chat box under the plan
-src/PlanStructure.*       Reads acts/chapters/scenes (with briefs) out of a plan
-src/ProsePrompt.*         Prose writer prompts: write a scene from its brief, expand a passage
-tests/                    Storage, LM Studio, chat, plan parsing, prose prompts, settings and main window
-                          tests (CTest)
-```
+See [docs/project-layout.md](docs/project-layout.md) for what lives where in the repository.

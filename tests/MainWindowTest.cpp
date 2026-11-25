@@ -6,7 +6,9 @@
 #include "MainWindow.h"
 #include "NovelStore.h"
 #include "PlanChat.h"
+#include "Theme.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QComboBox>
 #include <QElapsedTimer>
@@ -14,6 +16,10 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QStyle>
+#include <QStyleHints>
+#include <QTextBlock>
+#include <QTextLayout>
 #include <QTabWidget>
 #include <QTextCursor>
 #include <QTextBrowser>
@@ -669,6 +675,72 @@ void testProseWriter(const fs::path &dir)
     EXPECT(QSettings().value("prose/length").toInt() == 200); // the length choice is remembered
 }
 
+// Lightness of the colour the highlighter gave the first block's text.
+int firstBlockLightness(const QPlainTextEdit *edit)
+{
+    const auto formats = edit->document()->firstBlock().layout()->formats();
+    return formats.isEmpty() ? -1 : formats.first().format.foreground().color().lightness();
+}
+
+// @relation(FR-APP-1, FR-APP-2, FR-APP-3, FR-APP-4, FR-APP-5, scope=function)
+void testTheme(const fs::path &dir)
+{
+    const QString systemStyle = QApplication::style()->name();
+    {
+        MainWindow w;
+        EXPECT(w.openNovel(toQ(dir), NovelStore::Mode::Create));
+        auto *system = w.findChild<QAction *>("themeSystemAction");
+        auto *light = w.findChild<QAction *>("themeLightAction");
+        auto *dark = w.findChild<QAction *>("themeDarkAction");
+        auto *switchTheme = w.findChild<QAction *>("switchThemeAction");
+        EXPECT(system && light && dark && switchTheme);
+        EXPECT(system->isChecked() && !light->isChecked() && !dark->isChecked()); // default: follow the system
+        EXPECT(switchTheme->shortcut() == QKeySequence("Ctrl+Shift+D"));
+
+        auto *scene = w.findChild<QPlainTextEdit *>("sceneEdit");
+        scene->insertPlainText("# A heading");
+
+        dark->trigger();
+        QApplication::processEvents(); // widgets take on the application palette through events
+        EXPECT(Theme::isDark(QApplication::palette()));
+        EXPECT(Theme::isDark(scene->palette()));
+        EXPECT(QApplication::style()->name().compare("fusion", Qt::CaseInsensitive) == 0);
+        // (The color scheme hint to the platform isn't checked: the headless test platform ignores it.)
+        EXPECT(QSettings().value("appearance/theme").toString() == "dark");
+        EXPECT(firstBlockLightness(scene) > 150); // headings turn light on a dark background
+
+        switchTheme->trigger(); // dark -> light
+        EXPECT(light->isChecked() && !Theme::isDark(QApplication::palette()));
+        EXPECT(QSettings().value("appearance/theme").toString() == "light");
+        EXPECT(firstBlockLightness(scene) >= 0 && firstBlockLightness(scene) < 130);
+
+        switchTheme->trigger(); // light -> dark
+        EXPECT(dark->isChecked() && Theme::isDark(QApplication::palette()));
+
+        // Optional: NOVELWRITER_SCREENSHOT_DIR=<dir> (with QT_QPA_PLATFORM=offscreen) saves light.png and dark.png.
+        if (const QString shots = qEnvironmentVariable("NOVELWRITER_SCREENSHOT_DIR"); !shots.isEmpty()) {
+            scene->setPlainText("# Chapter One\n\nThe harbour was **quiet**, and the gulls\n> watched from the "
+                                "breakwater.\n\n- a list item\n- `code`");
+            w.resize(1100, 700);
+            w.show();
+            for (QAction *mode : {light, dark}) {
+                mode->trigger();
+                QApplication::processEvents();
+                w.grab().save(shots + "/" + (mode == light ? "light" : "dark") + ".png");
+            }
+        }
+        w.close();
+    }
+    {
+        MainWindow w; // the choice is remembered
+        EXPECT(w.findChild<QAction *>("themeDarkAction")->isChecked());
+        w.findChild<QAction *>("themeSystemAction")->trigger();
+        EXPECT(QApplication::style()->name() == systemStyle); // the platform's own style again
+        EXPECT(QSettings().value("appearance/theme").toString() == "system");
+    }
+    EXPECT(Theme::fromString("dark") == Theme::Mode::Dark && Theme::fromString("bogus") == Theme::Mode::System);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -695,6 +767,7 @@ int main(int argc, char **argv)
     testCreateStructureFromPlan(root / "structure.novel");
     testPlanTemplateChoice(root / "template.novel");
     testProseWriter(root / "prose.novel");
+    testTheme(root / "theme.novel");
 
     QSettings().clear();
     if (g_failures == 0) {

@@ -64,6 +64,8 @@ add_library(novelui STATIC
     src/PlanChatPanel.h
     src/SettingsDialog.cpp
     src/SettingsDialog.h
+    src/Theme.cpp
+    src/Theme.h
 )
 target_link_libraries(novelui PUBLIC novelstore novelai Qt6::Core Qt6::Gui Qt6::Widgets)
 set_target_properties(novelui PROPERTIES AUTOMOC ON)

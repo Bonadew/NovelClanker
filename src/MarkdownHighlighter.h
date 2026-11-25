@@ -15,8 +15,12 @@ class MarkdownHighlighter : public QSyntaxHighlighter
 
   protected:
     void highlightBlock(const QString &text) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
   private:
+    // Colours that read well on the current palette's background (light or dark).
+    void updateColors();
+
     struct Rule {
         QRegularExpression pattern;
         QTextCharFormat format;

@@ -767,6 +767,51 @@ Settings are stored per user, outside the novel.
 [[/SECTION]]
 
 [[SECTION]]
+TITLE: Appearance
+
+[REQUIREMENT]
+UID: FR-APP-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+**View > Theme** offers System, Light and Dark. The choice is saved per user and applied at startup.
+<<<
+
+[REQUIREMENT]
+UID: FR-APP-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+System uses the platform's own style and colours, including its light or dark setting where it has one.
+<<<
+
+[REQUIREMENT]
+UID: FR-APP-3
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Light and Dark use the same style and fixed palettes on every platform, and tell the platform which scheme is in use (so the window title bar matches where the platform supports it).
+<<<
+
+[REQUIREMENT]
+UID: FR-APP-4
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+**Switch Light/Dark** (Ctrl+Shift+D) switches from the scheme currently shown to the other one.
+<<<
+
+[REQUIREMENT]
+UID: FR-APP-5
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Markdown highlighting uses colours that are readable on the current background and changes as soon as the theme does.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
 TITLE: Export
 
 [REQUIREMENT]
@@ -858,7 +903,7 @@ UID: DAT-9
 PRIORITY: Must
 STATUS: Implemented
 STATEMENT: >>>
-Application settings (server address, model choices, prose length, last novel) live in per-user settings, never in a novel.
+Application settings (server address, model choices, prose length, theme, last novel) live in per-user settings, never in a novel.
 <<<
 
 [TEXT]

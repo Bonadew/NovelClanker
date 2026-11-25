@@ -12,8 +12,10 @@
 #include "PlanStructure.h"
 #include "ProsePrompt.h"
 #include "SettingsDialog.h"
+#include "Theme.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -296,6 +298,39 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     structureMenu->addSeparator();
     structureMenu->addAction(m_moveUpAction);
     structureMenu->addAction(m_moveDownAction);
+
+    // View > Theme: follow the system, or always light or dark. Saved per user.
+    QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
+    QMenu *themeMenu = viewMenu->addMenu(tr("&Theme"));
+    auto *themeGroup = new QActionGroup(this);
+    const struct {
+        Theme::Mode mode;
+        QString text;
+        const char *name;
+    } themes[] = {{Theme::Mode::System, tr("&System"), "themeSystemAction"},
+                  {Theme::Mode::Light, tr("&Light"), "themeLightAction"},
+                  {Theme::Mode::Dark, tr("&Dark"), "themeDarkAction"}};
+    const Theme::Mode savedTheme = Theme::load();
+    for (const auto &theme : themes) {
+        QAction *action = themeMenu->addAction(theme.text);
+        action->setObjectName(theme.name);
+        action->setCheckable(true);
+        action->setChecked(theme.mode == savedTheme);
+        themeGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [mode = theme.mode] {
+            Theme::apply(mode);
+            Theme::save(mode);
+        });
+    }
+    themeMenu->addSeparator();
+    QAction *switchTheme = themeMenu->addAction(tr("S&witch Light/Dark"));
+    switchTheme->setObjectName("switchThemeAction");
+    switchTheme->setShortcut(QKeySequence(tr("Ctrl+Shift+D")));
+    connect(switchTheme, &QAction::triggered, this, [this] {
+        // From whatever is showing now (System may be either) to the other one.
+        const char *target = Theme::isDark(QApplication::palette()) ? "themeLightAction" : "themeDarkAction";
+        findChild<QAction *>(target)->trigger();
+    });
 
     // --- Signals -------------------------------------------------------------------------------------
     connect(m_tree, &QTreeWidget::currentItemChanged, this,

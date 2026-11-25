@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "Theme.h"
 
 #include <QApplication>
 #include <QFileInfo>
@@ -16,6 +17,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     QApplication::setApplicationName("NovelWriter");
     QApplication::setOrganizationName("NovelWriter");
+    Theme::apply(Theme::load()); // light, dark or the system's, as chosen in View > Theme
 
     MainWindow window;
     window.resize(1100, 750);
