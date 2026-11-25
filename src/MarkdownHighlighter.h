@@ -13,6 +13,9 @@ class MarkdownHighlighter : public QSyntaxHighlighter
   public:
     explicit MarkdownHighlighter(QTextDocument *parent);
 
+    // Sizes headings from the document's current default font again (call after changing the editor's font).
+    void refreshFonts();
+
   protected:
     void highlightBlock(const QString &text) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -20,6 +23,7 @@ class MarkdownHighlighter : public QSyntaxHighlighter
   private:
     // Colours that read well on the current palette's background (light or dark).
     void updateColors();
+    void setHeadingSizes(); // relative to the document's default font
 
     struct Rule {
         QRegularExpression pattern;

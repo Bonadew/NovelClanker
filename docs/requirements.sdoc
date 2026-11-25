@@ -809,6 +809,22 @@ STATEMENT: >>>
 Markdown highlighting uses colours that are readable on the current background and changes as soon as the theme does.
 <<<
 
+[REQUIREMENT]
+UID: FR-APP-6
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Ctrl+Plus and Ctrl+Minus make the text of the scene, synopsis and plan editors larger and smaller in steps (8 to 48 pt; Ctrl+= also works without Shift), and Ctrl+0 restores the default of 12 pt. The same commands are in the View menu, disabled at the smallest and largest size. Headings scale with the text.
+<<<
+
+[REQUIREMENT]
+UID: FR-APP-7
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+The text size is saved per user and applied at startup.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]
@@ -903,7 +919,7 @@ UID: DAT-9
 PRIORITY: Must
 STATUS: Implemented
 STATEMENT: >>>
-Application settings (server address, model choices, prose length, theme, last novel) live in per-user settings, never in a novel.
+Application settings (server address, model choices, prose length, theme, text size, last novel) live in per-user settings, never in a novel.
 <<<
 
 [TEXT]

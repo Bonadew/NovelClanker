@@ -223,7 +223,8 @@ if(BUILD_TESTING)
     add_test(NAME prose COMMAND prose_test)
 
     add_executable(mainwindow_test tests/MainWindowTest.cpp)
-    target_link_libraries(mainwindow_test PRIVATE novelui)
+    find_package(Qt6 REQUIRED COMPONENTS Test) # QTest::keyClick: real key presses, shortcuts included
+    target_link_libraries(mainwindow_test PRIVATE novelui Qt6::Test)
     novelwriter_warnings(mainwindow_test)
     add_test(NAME mainwindow COMMAND mainwindow_test "${CMAKE_CURRENT_BINARY_DIR}/test-data-ui")
 

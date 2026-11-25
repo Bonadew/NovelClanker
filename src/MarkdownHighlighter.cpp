@@ -14,11 +14,10 @@ constexpr std::size_t kLinkRule = 4;
 
 MarkdownHighlighter::MarkdownHighlighter(QTextDocument *parent) : QSyntaxHighlighter(parent)
 {
-    const qreal headingScale[6] = {1.8, 1.5, 1.3, 1.15, 1.05, 1.0};
-    for (int i = 0; i < 6; ++i) {
-        m_headingFormats[i].setFontWeight(QFont::Bold);
-        m_headingFormats[i].setFontPointSize(parent->defaultFont().pointSizeF() * headingScale[i]);
+    for (QTextCharFormat &format : m_headingFormats) {
+        format.setFontWeight(QFont::Bold);
     }
+    setHeadingSizes();
 
     m_quoteFormat.setFontItalic(true);
     m_listFormat.setFontWeight(QFont::Bold);
@@ -43,6 +42,21 @@ MarkdownHighlighter::MarkdownHighlighter(QTextDocument *parent) : QSyntaxHighlig
     };
     updateColors();
     qApp->installEventFilter(this); // follow switches between light and dark mode
+}
+
+void MarkdownHighlighter::setHeadingSizes()
+{
+    const qreal headingScale[6] = {1.8, 1.5, 1.3, 1.15, 1.05, 1.0};
+    const qreal base = document()->defaultFont().pointSizeF();
+    for (int i = 0; i < 6; ++i) {
+        m_headingFormats[i].setFontPointSize(base * headingScale[i]);
+    }
+}
+
+void MarkdownHighlighter::refreshFonts()
+{
+    setHeadingSizes();
+    rehighlight();
 }
 
 void MarkdownHighlighter::updateColors()

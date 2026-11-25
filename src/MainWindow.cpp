@@ -42,6 +42,7 @@
 #include <QTreeWidgetItemIterator>
 
 #include <algorithm>
+#include <array>
 #include <utility>
 #include <vector>
 #include <QVBoxLayout>
@@ -49,6 +50,10 @@
 namespace {
 
 constexpr int kAutosaveDelayMs = 1500;
+// Text sizes (points) for the writing editors, stepped through with Ctrl+Plus / Ctrl+Minus.
+constexpr std::array kTextSizes{8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 28, 32, 36, 40, 48};
+constexpr int kDefaultTextSize = 12;
+constexpr auto kTextSizeKey = "appearance/textSize";
 constexpr auto kLastNovelKey = "lastNovel";
 constexpr int kIdRole = Qt::UserRole;
 
@@ -69,7 +74,7 @@ QPlainTextEdit *makeTextEditor(QWidget *parent)
 {
     auto *edit = new QPlainTextEdit(parent);
     QFont font = edit->font();
-    font.setPointSize(12);
+    font.setPointSize(kDefaultTextSize);
     edit->setFont(font);
     edit->setLineWrapMode(QPlainTextEdit::WidgetWidth);
     edit->document()->setDocumentMargin(24);
@@ -332,6 +337,22 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         findChild<QAction *>(target)->trigger();
     });
 
+    // View > Text size: Ctrl+Plus / Ctrl+Minus / Ctrl+0 for the writing editors (scene, synopsis, plan).
+    viewMenu->addSeparator();
+    QAction *zoomIn = viewMenu->addAction(tr("&Larger Text"), this, [this] { changeTextSize(+1); });
+    zoomIn->setObjectName("zoomInAction");
+    // Ctrl++ is Ctrl+Shift+= on many layouts; also accept Ctrl+= so the key works without Shift.
+    zoomIn->setShortcuts({QKeySequence::ZoomIn, QKeySequence(tr("Ctrl+="))});
+    QAction *zoomOut = viewMenu->addAction(tr("&Smaller Text"), this, [this] { changeTextSize(-1); });
+    zoomOut->setObjectName("zoomOutAction");
+    zoomOut->setShortcuts({QKeySequence::ZoomOut, QKeySequence(tr("Ctrl+_"))});
+    QAction *zoomReset = viewMenu->addAction(tr("&Default Text Size"), this, [this] { setTextSize(kDefaultTextSize); });
+    zoomReset->setObjectName("zoomResetAction");
+    zoomReset->setShortcut(QKeySequence(tr("Ctrl+0")));
+    for (QAction *action : {zoomIn, zoomOut, zoomReset}) {
+        action->setShortcutContext(Qt::ApplicationShortcut); // also while the plan chat has focus
+    }
+
     // --- Signals -------------------------------------------------------------------------------------
     connect(m_tree, &QTreeWidget::currentItemChanged, this,
             [this](QTreeWidgetItem *current) { showItem(current); });
@@ -354,6 +375,43 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     showItem(nullptr);
     loadSynopsisAndPlan();
     updateTitle();
+    setTextSize(QSettings().value(kTextSizeKey, kDefaultTextSize).toInt(), false);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Text size
+// ---------------------------------------------------------------------------------------------------
+
+void MainWindow::setTextSize(int points, bool remember)
+{
+    points = std::clamp(points, kTextSizes.front(), kTextSizes.back());
+    m_textSize = points;
+    for (QPlainTextEdit *edit : {m_editor, m_synopsisEdit, m_planEdit}) {
+        QFont font = edit->font();
+        font.setPointSize(points);
+        edit->setFont(font); // also the document's default font, which the highlighters scale headings from
+    }
+    for (MarkdownHighlighter *highlighter : {m_highlighter, m_planHighlighter}) {
+        highlighter->refreshFonts();
+    }
+    if (remember) {
+        QSettings().setValue(kTextSizeKey, points);
+        statusBar()->showMessage(tr("Text size: %1 pt").arg(points), 2000);
+    }
+    findChild<QAction *>("zoomInAction")->setEnabled(points < kTextSizes.back());
+    findChild<QAction *>("zoomOutAction")->setEnabled(points > kTextSizes.front());
+}
+
+void MainWindow::changeTextSize(int steps)
+{
+    // Move along the list of sizes: fine steps for small text, larger ones for big text.
+    auto it = std::lower_bound(kTextSizes.begin(), kTextSizes.end(), m_textSize);
+    if (steps > 0) {
+        it = (it != kTextSizes.end() && *it == m_textSize) ? std::next(it) : it;
+        setTextSize(it == kTextSizes.end() ? kTextSizes.back() : *it);
+    } else {
+        setTextSize(it == kTextSizes.begin() ? kTextSizes.front() : *std::prev(it));
+    }
 }
 
 MainWindow::~MainWindow() = default;
@@ -1308,7 +1366,7 @@ QWidget *MainWindow::buildPlanView()
 
     m_planEdit = makeTextEditor(view);
     m_planEdit->setObjectName("planEdit");
-    new MarkdownHighlighter(m_planEdit->document());
+    m_planHighlighter = new MarkdownHighlighter(m_planEdit->document());
     m_planTimer = makeAutosaveTimer(this);
 
     auto *planPane = new QWidget(view);

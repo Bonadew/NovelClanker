@@ -52,6 +52,8 @@ flowchart LR
 - **View → Theme** switches between light and dark mode: **System** follows the operating system, **Light** and
   **Dark** always use that scheme (the same on every platform). **Switch Light/Dark** (**Ctrl+Shift+D**) flips to
   the other one. The choice is remembered.
+- **Ctrl+Plus** / **Ctrl+Minus** make the text in the scene, synopsis and plan editors larger or smaller
+  (**Ctrl+0** restores the default size; also in the **View** menu). The size is remembered.
 
 - The **Synopsis** tab holds the novel's synopsis: write or paste it there. It is stored exactly as written.
 - A novel can have **several plans**, listed on the **Plan** tab with the model that generated each one, or

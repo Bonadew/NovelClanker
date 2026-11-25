@@ -123,6 +123,10 @@ class MainWindow : public QMainWindow
     QString effectivePlanModel() const; // the novel's choice, else the planner model from Settings
     QPlainTextEdit *focusedEditor() const;
 
+    // Text size of the writing editors (View menu, Ctrl+Plus / Ctrl+Minus / Ctrl+0); saved per user.
+    void setTextSize(int points, bool remember = true);
+    void changeTextSize(int steps); // +1 larger, -1 smaller
+
     // Tree and status
     void rebuildTree(std::optional<Id> select);
     QTreeWidgetItem *findItem(Id id) const;
@@ -143,6 +147,8 @@ class MainWindow : public QMainWindow
     QPlainTextEdit *m_editor = nullptr;
     QLabel *m_briefLabel = nullptr; // brief of the selected act/chapter/scene
     MarkdownHighlighter *m_highlighter = nullptr;
+    MarkdownHighlighter *m_planHighlighter = nullptr;
+    int m_textSize = 0; // points, for the scene, synopsis and plan editors
     QTimer *m_autosaveTimer = nullptr;
 
     QPushButton *m_writeSceneButton = nullptr;

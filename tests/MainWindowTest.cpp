@@ -23,6 +23,7 @@
 #include <QTabWidget>
 #include <QTextCursor>
 #include <QTextBrowser>
+#include <QTest>
 #include <QTreeWidget>
 
 #include <cstdio>
@@ -741,6 +742,69 @@ void testTheme(const fs::path &dir)
     EXPECT(Theme::fromString("dark") == Theme::Mode::Dark && Theme::fromString("bogus") == Theme::Mode::System);
 }
 
+// Point size the highlighter gave the first block (a heading) of an editor.
+qreal firstBlockPointSize(const QPlainTextEdit *edit)
+{
+    const auto formats = edit->document()->firstBlock().layout()->formats();
+    return formats.isEmpty() ? -1 : formats.first().format.fontPointSize();
+}
+
+// @relation(FR-APP-6, FR-APP-7, scope=function)
+void testTextSize(const fs::path &dir)
+{
+    {
+        MainWindow w;
+        EXPECT(w.openNovel(toQ(dir), NovelStore::Mode::Create));
+        auto *scene = w.findChild<QPlainTextEdit *>("sceneEdit");
+        auto *synopsis = w.findChild<QPlainTextEdit *>("synopsisEdit");
+        auto *plan = w.findChild<QPlainTextEdit *>("planEdit");
+        auto *zoomIn = w.findChild<QAction *>("zoomInAction");
+        auto *zoomOut = w.findChild<QAction *>("zoomOutAction");
+        auto *zoomReset = w.findChild<QAction *>("zoomResetAction");
+        EXPECT(scene && synopsis && plan && zoomIn && zoomOut && zoomReset);
+        EXPECT(scene->font().pointSize() == 12); // default
+        EXPECT(zoomIn->shortcuts().contains(QKeySequence::ZoomIn) && zoomIn->shortcuts().contains(QKeySequence("Ctrl+=")));
+        EXPECT(zoomOut->shortcuts().contains(QKeySequence::ZoomOut));
+        EXPECT(zoomReset->shortcut() == QKeySequence("Ctrl+0"));
+
+        scene->insertPlainText("# Heading");
+        EXPECT(qFuzzyCompare(firstBlockPointSize(scene), 12 * 1.8));
+
+        // Real key presses while writing in the scene.
+        w.show();
+        w.activateWindow();
+        scene->setFocus();
+        EXPECT(QTest::qWaitForWindowActive(&w)); // shortcuts go to the active window
+        QTest::keyClick(scene, Qt::Key_Plus, Qt::ControlModifier);
+        EXPECT(scene->font().pointSize() == 13);
+        QTest::keyClick(scene, Qt::Key_Equal, Qt::ControlModifier); // the same key without Shift
+        EXPECT(scene->font().pointSize() == 14);
+        EXPECT(synopsis->font().pointSize() == 14 && plan->font().pointSize() == 14); // all writing editors
+        EXPECT(qFuzzyCompare(firstBlockPointSize(scene), 14 * 1.8));                  // headings follow
+        EXPECT(scene->toPlainText() == "# Heading");                                  // no "+" or "=" typed
+        QTest::keyClick(scene, Qt::Key_Minus, Qt::ControlModifier);
+        QTest::keyClick(scene, Qt::Key_Minus, Qt::ControlModifier);
+        QTest::keyClick(scene, Qt::Key_Minus, Qt::ControlModifier);
+        EXPECT(scene->font().pointSize() == 11);
+        EXPECT(QSettings().value("appearance/textSize").toInt() == 11);
+        QTest::keyClick(scene, Qt::Key_0, Qt::ControlModifier);
+        EXPECT(scene->font().pointSize() == 12);
+
+        // Limits: the menu entries are disabled at the ends.
+        for (int i = 0; i < 30; ++i) {
+            zoomIn->trigger();
+        }
+        EXPECT(scene->font().pointSize() == 48 && !zoomIn->isEnabled() && zoomOut->isEnabled());
+        zoomOut->trigger();
+        EXPECT(scene->font().pointSize() == 40 && zoomIn->isEnabled());
+        w.close();
+    }
+    MainWindow w; // the size is remembered
+    EXPECT(w.findChild<QPlainTextEdit *>("sceneEdit")->font().pointSize() == 40);
+    w.findChild<QAction *>("zoomResetAction")->trigger();
+    EXPECT(QSettings().value("appearance/textSize").toInt() == 12);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -768,6 +832,7 @@ int main(int argc, char **argv)
     testPlanTemplateChoice(root / "template.novel");
     testProseWriter(root / "prose.novel");
     testTheme(root / "theme.novel");
+    testTextSize(root / "textsize.novel");
 
     QSettings().clear();
     if (g_failures == 0) {
