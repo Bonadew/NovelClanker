@@ -102,11 +102,11 @@ QList<ChatMessage> messages(const QString &synopsis, const QString &plan, const 
 
 QString incompleteReason(const QString &current, const QString &revised)
 {
-    static const QRegularExpression act(QStringLiteral(R"(^###\s+Act\b)"),
-                                        QRegularExpression::MultilineOption | QRegularExpression::CaseInsensitiveOption);
-    static const QRegularExpression chapter(QStringLiteral(R"(^####\s+Chapter\b)"),
-                                            QRegularExpression::MultilineOption |
-                                                QRegularExpression::CaseInsensitiveOption);
+    // Unicode properties: "\s" must also match the no-break/narrow spaces some models write ("Chapter 10").
+    constexpr auto options = QRegularExpression::MultilineOption | QRegularExpression::CaseInsensitiveOption |
+                             QRegularExpression::UseUnicodePropertiesOption;
+    static const QRegularExpression act(QStringLiteral(R"(^###\s+Act\b)"), options);
+    static const QRegularExpression chapter(QStringLiteral(R"(^####\s+Chapter\b)"), options);
     const auto count = [](const QRegularExpression &re, const QString &text) {
         int n = 0;
         for (auto it = re.globalMatch(text); it.hasNext(); it.next()) {

@@ -153,6 +153,32 @@ Marker marker(const QString &line)
     return result;
 }
 
+// Models (gpt-oss in particular) write typographic characters that the patterns would not match:
+// "Chapter 10", "Scene 1", "non‑breaking hyphens". Map them to plain equivalents; for briefs
+// this makes no visible difference.
+QString normalize(const QString &text)
+{
+    QString out;
+    out.reserve(text.size());
+    for (const QChar ch : text) {
+        const char16_t c = ch.unicode();
+        if (c == u'\n' || c == u'\r') {
+            out += ch;
+        } else if (c == 0x200B || c == 0x200C || c == 0x200D || c == 0x2060 || c == 0xFEFF) {
+            continue; // zero-width characters and byte-order marks
+        } else if (ch.isSpace()) {
+            out += u' '; // tabs, no-break and narrow spaces, thin spaces, ...
+        } else if (c == 0x2010 || c == 0x2011 || c == 0x2212) {
+            out += u'-'; // hyphen, non-breaking hyphen, minus sign
+        } else if (c == 0x2012) {
+            out += u'–'; // figure dash
+        } else {
+            out += ch;
+        }
+    }
+    return out;
+}
+
 // "1.2" -> "2": scene numbers are often written as chapter.scene.
 QString lastNumber(const QString &number)
 {
@@ -163,7 +189,7 @@ QString lastNumber(const QString &number)
 
 QList<Act> parse(const QString &plan)
 {
-    QStringList lines = plan.split('\n');
+    QStringList lines = normalize(plan).split('\n');
     for (QString &line : lines) {
         if (line.endsWith('\r')) {
             line.chop(1);

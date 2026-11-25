@@ -209,6 +209,31 @@ void testSceneBeforeNextHeading()
     EXPECT(acts[0].chapters[0].scenes[0].brief == "The end.");
 }
 
+// Regression: gpt-oss writes narrow no-break spaces (U+202F) as in "Chapter 10" and "Scene 1". Those
+// chapters were dropped (half the plan) and scene lines became briefs.
+void testTypographicCharacters()
+{
+    const QString plan = QString::fromUtf8("\xEF\xBB\xBF" // byte-order mark
+                                           "## Structure\n\n"
+                                           "### Act 1: The Inheritance\n"
+                                           "#### Chapter 9: Arrival  \n"
+                                           "- **Scene 1**: POV Mira. Setting: Harbor at dawn.\n"
+                                           "#### Chapter 10: Letter Delivered  \n"
+                                           "- **Scene 1**: POV Sofie. Setting: her kitchen.\n"
+                                           "- **Scene 2 ‑ The Reading**: She reads it.\n"
+                                           "### Act 2: After\n"
+                                           "#### Chapter​ 11‑ Home\n"
+                                           "\t- Scene 1: Return ‑ She comes back.\n");
+    const QList<Act> acts = parse(plan);
+    EXPECT(outline(acts) == "Act 1: The Inheritance[Chapter 9: Arrival(Scene 1),"
+                            "Chapter 10: Letter Delivered(Scene 1,The Reading)] Act 2: After[Chapter 11: Home(Return)]");
+    EXPECT(acts.size() == 2 && acts[0].chapters.size() == 2);
+    EXPECT(acts[0].chapters[0].scenes[0].brief == "POV Mira. Setting: Harbor at dawn."); // plain spaces in briefs
+    EXPECT(acts[0].chapters[1].scenes[0].brief == "POV Sofie. Setting: her kitchen.");
+    EXPECT(acts[0].chapters[1].brief.isEmpty()); // the scene lines didn't become the chapter's brief
+    EXPECT(acts[1].chapters[0].scenes[0].brief == "She comes back.");
+}
+
 void testNothingToFind()
 {
     EXPECT(parse("").isEmpty());
@@ -288,6 +313,7 @@ int main(int argc, char **argv)
     testImplicitParents();
     testChaptersAsListItems();
     testSceneBeforeNextHeading();
+    testTypographicCharacters();
     testNothingToFind();
     printRealPlan();
     checkNovelPlans();

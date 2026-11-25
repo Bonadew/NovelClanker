@@ -123,6 +123,12 @@ void testPlanChat()
     noActs.remove(QRegularExpression("### Act \\d: A\n"));
     EXPECT(PlanChat::incompleteReason(full, noActs).contains("acts"));
     EXPECT(PlanChat::incompleteReason("# Short plan", "# Even shorter").isEmpty()); // tiny plans aren't judged
+    // Headings written with narrow no-break spaces (gpt-oss) still count.
+    QString narrow = full;
+    narrow.replace("### Act ", QString::fromUtf8("### Act "));
+    narrow.replace("#### Chapter ", QString::fromUtf8("#### Chapter "));
+    EXPECT(PlanChat::incompleteReason(full, narrow).isEmpty());
+    EXPECT(PlanChat::incompleteReason(narrow, narrow.left(narrow.indexOf(QString::fromUtf8("Act 3")))).contains("acts"));
 
     // Replies.
     PlanChat::Reply r = PlanChat::parseReply("Tightened Act 1.\n\n<plan>\n# Plan\n\n### Act 1: Home\n</plan>\n");
