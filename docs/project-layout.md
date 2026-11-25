@@ -8,6 +8,7 @@ docs/storage-format.md    Novel storage format (RocksDB keys, format versions)
 docs/project-layout.md    This file
 strictdoc_config.py       StrictDoc project configuration
 tools/requirements-docs.txt  Documentation tooling (StrictDoc), installed into .venv
+LICENSE                   GNU General Public License v3 (the project is GPL-3.0-or-later)
 build.bat                 Windows: builds everything and creates the double-clickable dist\ folder
 build.sh                  Linux: builds everything and creates the self-contained dist/ folder
 conanfile.py              Conan dependencies (Qt 6 qtbase incl. Network, RocksDB)

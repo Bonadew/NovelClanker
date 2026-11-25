@@ -172,7 +172,7 @@ template <typename F> bool MainWindow::attempt(const QString &failure, F &&opera
         operation();
         return true;
     } catch (const std::exception &e) {
-        QMessageBox::critical(this, tr("NovelWriter"), failure + "\n\n" + QString::fromUtf8(e.what()));
+        QMessageBox::critical(this, tr("NovelClanker"), failure + "\n\n" + QString::fromUtf8(e.what()));
         return false;
     }
 }
@@ -476,7 +476,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     stopProse();
     m_chat->stop();       // an unfinished chat answer changes nothing
     if (saveAll() ||
-        QMessageBox::question(this, tr("NovelWriter"), tr("Some changes could not be saved. Quit anyway?")) ==
+        QMessageBox::question(this, tr("NovelClanker"), tr("Some changes could not be saved. Quit anyway?")) ==
             QMessageBox::Yes) {
         event->accept();
     } else {
@@ -488,7 +488,7 @@ void MainWindow::newNovel()
 {
     const QString docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     const QString dir = QFileDialog::getSaveFileName(this, tr("New Novel"), docs + "/Untitled.novel",
-                                                     tr("NovelWriter novel (*.novel)"), nullptr,
+                                                     tr("NovelClanker novel (*.novel)"), nullptr,
                                                      QFileDialog::DontConfirmOverwrite);
     if (dir.isEmpty()) {
         return;
@@ -2301,6 +2301,6 @@ void MainWindow::updateStatus()
 
 void MainWindow::updateTitle()
 {
-    setWindowTitle(m_store ? QFileInfo(fromPath(m_store->path())).completeBaseName() + " - NovelWriter"
-                           : QStringLiteral("NovelWriter"));
+    setWindowTitle(m_store ? QFileInfo(fromPath(m_store->path())).completeBaseName() + " - NovelClanker"
+                           : QStringLiteral("NovelClanker"));
 }

@@ -14,14 +14,13 @@ using Id = NovelStore::Id;
 using Kind = NovelStore::Kind;
 
 constexpr std::string_view kFormatKey = "novel/format";
-constexpr std::string_view kFormatVersion = "3";
+constexpr std::string_view kFormatVersion = "1";
 constexpr std::string_view kNextIdKey = "novel/next_id";
 constexpr std::string_view kActsKey = "novel/acts";
 constexpr std::string_view kSynopsisKey = "novel/synopsis";
 constexpr std::string_view kPlansKey = "novel/plans";
 constexpr std::string_view kPlanModelKey = "novel/plan_model";
 constexpr std::string_view kPlanTemplateKey = "novel/plan_template";
-constexpr std::string_view kLegacyPlanKey = "novel/plan"; // format 2: a single plan
 
 rocksdb::Slice slice(std::string_view s)
 {
@@ -120,7 +119,7 @@ NovelStore::NovelStore(const std::filesystem::path &dir, Mode mode) : m_path(dir
     // first rather than littering an arbitrary folder the user picked.
     std::error_code ec;
     if (mode == Mode::Open && !std::filesystem::exists(dir / "CURRENT", ec)) {
-        throw StorageError("Not a NovelWriter novel: " + toUtf8(dir));
+        throw StorageError("Not a NovelClanker novel: " + toUtf8(dir));
     }
 
     rocksdb::Options options;
@@ -153,16 +152,15 @@ NovelStore::NovelStore(const std::filesystem::path &dir, Mode mode) : m_path(dir
     std::string format;
     const auto status = m_db->Get({}, slice(kFormatKey), &format);
     if (status.IsNotFound()) {
-        throw StorageError("Not a NovelWriter novel: " + toUtf8(dir));
+        throw StorageError("Not a NovelClanker novel: " + toUtf8(dir));
     }
     check(status, "Cannot read novel");
-    m_nextId = parseId(get(kNextIdKey));
-    if (format == "2") {
-        upgradeFromFormat2();
-    } else if (format != kFormatVersion) {
+    // Only the current format is read; anything else is refused before reading (or changing) it.
+    if (format != kFormatVersion) {
         throw StorageError("Unsupported novel format version '" + format + "' (this version reads format " +
                            std::string(kFormatVersion) + ")");
     }
+    m_nextId = parseId(get(kNextIdKey));
 
     for (Id actId : decodeIds(get(kActsKey))) {
         const auto brief = [this](const char *kind, Id id) {
@@ -183,25 +181,6 @@ NovelStore::NovelStore(const std::filesystem::path &dir, Mode mode) : m_path(dir
                            getOptional(*m_db, key("plan", planId, "model"), "Cannot read plan"),
                            getOptional(*m_db, key("plan", planId, "template"), "Cannot read plan")});
     }
-}
-
-void NovelStore::upgradeFromFormat2()
-{
-    // Format 2 had at most one plan, in "novel/plan", with no record of how it was made.
-    const std::string legacyPlan = getOptional(*m_db, kLegacyPlanKey, "Cannot read plan");
-    rocksdb::WriteBatch batch;
-    std::string planIds;
-    if (!legacyPlan.empty()) {
-        const Id id = m_nextId++;
-        batch.Put(key("plan", id, "title"), "Plan 1");
-        batch.Put(key("plan", id, "text"), slice(legacyPlan));
-        planIds = std::to_string(id);
-    }
-    batch.Put(slice(kPlansKey), planIds);
-    batch.Put(slice(kNextIdKey), std::to_string(m_nextId));
-    batch.Delete(slice(kLegacyPlanKey));
-    batch.Put(slice(kFormatKey), slice(kFormatVersion));
-    check(m_db->Write(durableWrites(), &batch), "Cannot upgrade novel to the current format");
 }
 
 NovelStore::~NovelStore()

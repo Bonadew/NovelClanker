@@ -275,14 +275,14 @@ void testAbort()
     EXPECT(!ended && !chat.isRunning()); // nothing emitted after abort()
 }
 
-// Optional: generate a real plan. Set NOVELWRITER_LIVE_LMSTUDIO (server) and NOVELWRITER_LIVE_PLANNER_MODEL;
-// the plan is written to NOVELWRITER_LIVE_PLAN_OUT (or printed). With NOVELWRITER_LIVE_REFINE_PLAN set to a plan
-// file, the plan is instead refined through the plan chat with NOVELWRITER_LIVE_REFINE_REQUEST.
+// Optional: generate a real plan. Set NOVELCLANKER_LIVE_LMSTUDIO (server) and NOVELCLANKER_LIVE_PLANNER_MODEL;
+// the plan is written to NOVELCLANKER_LIVE_PLAN_OUT (or printed). With NOVELCLANKER_LIVE_REFINE_PLAN set to a plan
+// file, the plan is instead refined through the plan chat with NOVELCLANKER_LIVE_REFINE_REQUEST.
 // @relation(NFR-12, scope=function)
 void livePlan()
 {
-    const QString server = qEnvironmentVariable("NOVELWRITER_LIVE_LMSTUDIO");
-    const QString model = qEnvironmentVariable("NOVELWRITER_LIVE_PLANNER_MODEL");
+    const QString server = qEnvironmentVariable("NOVELCLANKER_LIVE_LMSTUDIO");
+    const QString model = qEnvironmentVariable("NOVELCLANKER_LIVE_PLANNER_MODEL");
     if (server.isEmpty() || model.isEmpty()) {
         return;
     }
@@ -297,22 +297,22 @@ void livePlan()
         "winter's worst storm Mira sails north alone in her brother's boat. She delivers the letter to the widow "
         "of the Albatross's captain, testifies at the reopened inquiry, and returns to Skarra knowing she will "
         "never be welcome there again, but relighting the lamp one last time before handing over the keys.");
-    // NOVELWRITER_LIVE_SYNOPSIS_FILE replaces the sample synopsis; NOVELWRITER_LIVE_TEMPLATE picks the template.
+    // NOVELCLANKER_LIVE_SYNOPSIS_FILE replaces the sample synopsis; NOVELCLANKER_LIVE_TEMPLATE picks the template.
     QString chosenSynopsis = synopsis;
-    if (const QString file = qEnvironmentVariable("NOVELWRITER_LIVE_SYNOPSIS_FILE"); !file.isEmpty()) {
+    if (const QString file = qEnvironmentVariable("NOVELCLANKER_LIVE_SYNOPSIS_FILE"); !file.isEmpty()) {
         QFile in(file);
         EXPECT(in.open(QIODevice::ReadOnly));
         chosenSynopsis = QString::fromUtf8(in.readAll());
     }
-    const QString templateId = PlanPrompt::templateById(qEnvironmentVariable("NOVELWRITER_LIVE_TEMPLATE")).id;
+    const QString templateId = PlanPrompt::templateById(qEnvironmentVariable("NOVELCLANKER_LIVE_TEMPLATE")).id;
     std::printf("Template: %s\n", qPrintable(templateId));
     QList<ChatMessage> messages = PlanPrompt::messages(chosenSynopsis, templateId);
     double temperature = PlanPrompt::kTemperature;
-    const QString refinePath = qEnvironmentVariable("NOVELWRITER_LIVE_REFINE_PLAN");
+    const QString refinePath = qEnvironmentVariable("NOVELCLANKER_LIVE_REFINE_PLAN");
     if (!refinePath.isEmpty()) {
         QFile file(refinePath);
         EXPECT(file.open(QIODevice::ReadOnly));
-        const QString request = qEnvironmentVariable("NOVELWRITER_LIVE_REFINE_REQUEST");
+        const QString request = qEnvironmentVariable("NOVELCLANKER_LIVE_REFINE_REQUEST");
         messages = PlanChat::messages(chosenSynopsis, QString::fromUtf8(file.readAll()), {}, request);
         temperature = PlanChat::kTemperature;
         std::printf("Refining %s: \"%s\"\n", qPrintable(refinePath), qPrintable(request));
@@ -355,7 +355,7 @@ void livePlan()
     }
     if (text) {
         EXPECT(!text->contains("<think>"));
-        if (const QString out = qEnvironmentVariable("NOVELWRITER_LIVE_PLAN_OUT"); !out.isEmpty()) {
+        if (const QString out = qEnvironmentVariable("NOVELCLANKER_LIVE_PLAN_OUT"); !out.isEmpty()) {
             QFile file(out);
             if (file.open(QIODevice::WriteOnly)) {
                 file.write(text->toUtf8());

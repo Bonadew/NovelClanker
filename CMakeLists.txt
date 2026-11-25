@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.23)
 
-project(NovelWriter VERSION 0.1.0 LANGUAGES CXX)
+project(NovelClanker VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,7 +10,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Widgets)
 find_package(RocksDB REQUIRED)
 
-function(novelwriter_warnings target)
+function(novelclanker_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
     else()
@@ -25,7 +25,7 @@ add_library(novelstore STATIC
 )
 target_include_directories(novelstore PUBLIC src)
 target_link_libraries(novelstore PRIVATE RocksDB::rocksdb)
-novelwriter_warnings(novelstore)
+novelclanker_warnings(novelstore)
 
 # AI integration (LM Studio client, chat completions, prompts, AI settings). Qt Core/Network only, so it can be
 # tested without widgets.
@@ -48,7 +48,7 @@ add_library(novelai STATIC
 target_include_directories(novelai PUBLIC src)
 target_link_libraries(novelai PUBLIC Qt6::Core Qt6::Network)
 set_target_properties(novelai PROPERTIES AUTOMOC ON)
-novelwriter_warnings(novelai)
+novelclanker_warnings(novelai)
 
 # User interface. A library so tests can drive the real windows headlessly.
 add_library(novelui STATIC
@@ -69,15 +69,15 @@ add_library(novelui STATIC
 )
 target_link_libraries(novelui PUBLIC novelstore novelai Qt6::Core Qt6::Gui Qt6::Widgets)
 set_target_properties(novelui PROPERTIES AUTOMOC ON)
-novelwriter_warnings(novelui)
+novelclanker_warnings(novelui)
 
-add_executable(novelwriter WIN32 MACOSX_BUNDLE src/main.cpp)
-target_link_libraries(novelwriter PRIVATE novelui)
-novelwriter_warnings(novelwriter)
+add_executable(novelclanker WIN32 MACOSX_BUNDLE src/main.cpp)
+target_link_libraries(novelclanker PRIVATE novelui)
+novelclanker_warnings(novelclanker)
 
-set_target_properties(novelwriter PROPERTIES
-    OUTPUT_NAME "NovelWriter"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "com.novelwriter.app"
+set_target_properties(novelclanker PROPERTIES
+    OUTPUT_NAME "NovelClanker"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "com.novelclanker.app"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
 )
@@ -97,18 +97,29 @@ if(WIN32)
         # --verbose 0, so keep the default verbosity.
         --exclude-plugins qtuiotouchplugin)
 
-    add_custom_command(TARGET novelwriter POST_BUILD
+    add_custom_command(TARGET novelclanker POST_BUILD
         COMMAND "${WINDEPLOYQT_EXECUTABLE}" ${_windeployqt_args} --no-compiler-runtime
-                "$<TARGET_FILE:novelwriter>"
-        COMMENT "Deploying Qt runtime next to $<TARGET_FILE_NAME:novelwriter>"
+                "$<TARGET_FILE:novelclanker>"
+        COMMENT "Deploying Qt runtime next to $<TARGET_FILE_NAME:novelclanker>"
         VERBATIM)
 endif()
 
 # --- Installation (self-contained app folder / bundle) ---------------------------------------------------
 # cmake --install build/Release --prefix dist
-install(TARGETS novelwriter
+install(TARGETS novelclanker
     RUNTIME DESTINATION .
     BUNDLE DESTINATION .)
+
+# Licenses: NovelClanker's own (GPL-3.0-or-later), a notice naming the bundled libraries and where their sources
+# are, and each library's license files (collected by conanfile.py into generators/licenses/<library>/).
+install(FILES LICENSE DESTINATION . RENAME LICENSE.txt)
+install(FILES "${CMAKE_BINARY_DIR}/generators/THIRD-PARTY-NOTICES.txt" DESTINATION . OPTIONAL)
+if(EXISTS "${CMAKE_BINARY_DIR}/generators/licenses")
+    install(DIRECTORY "${CMAKE_BINARY_DIR}/generators/licenses/" DESTINATION licenses)
+else()
+    message(WARNING "No dependency licenses in ${CMAKE_BINARY_DIR}/generators/licenses (run conan install): "
+                    "'cmake --install' output will lack them")
+endif()
 
 if(WIN32)
     # Ship the MSVC runtime DLLs so the folder runs on machines without the VC++ redistributable.
@@ -138,22 +149,22 @@ if(WIN32)
     install(CODE "
         execute_process(
             COMMAND \"${WINDEPLOYQT_EXECUTABLE}\" ${_windeployqt_args} --no-compiler-runtime
-                    \"\${CMAKE_INSTALL_PREFIX}/$<TARGET_FILE_NAME:novelwriter>\"
+                    \"\${CMAKE_INSTALL_PREFIX}/$<TARGET_FILE_NAME:novelclanker>\"
             COMMAND_ERROR_IS_FATAL ANY)
     ")
 elseif(APPLE)
     find_program(MACDEPLOYQT_EXECUTABLE macdeployqt HINTS "${QT_BIN_DIR}" NO_DEFAULT_PATH REQUIRED)
     install(CODE "
         execute_process(
-            COMMAND \"${MACDEPLOYQT_EXECUTABLE}\" \"\${CMAKE_INSTALL_PREFIX}/NovelWriter.app\"
+            COMMAND \"${MACDEPLOYQT_EXECUTABLE}\" \"\${CMAKE_INSTALL_PREFIX}/NovelClanker.app\"
             COMMAND_ERROR_IS_FATAL ANY)
     ")
 else()
-    # Linux: a self-contained folder. NovelWriter finds the Qt libraries in lib/ (run path $ORIGIN/lib) and Qt
+    # Linux: a self-contained folder. NovelClanker finds the Qt libraries in lib/ (run path $ORIGIN/lib) and Qt
     # finds its plugins in plugins/ (qt.conf). Qt's own libraries and plugins already look for each other at
     # $ORIGIN and $ORIGIN/../../lib, so this layout needs no patching. System libraries (glibc, X11, xcb, OpenGL,
     # fontconfig) are not copied: they come with every desktop.
-    set_target_properties(novelwriter PROPERTIES INSTALL_RPATH "$ORIGIN/lib")
+    set_target_properties(novelclanker PROPERTIES INSTALL_RPATH "$ORIGIN/lib")
     get_filename_component(_qt_prefix "${QT_BIN_DIR}" DIRECTORY)
     set(_qt_plugins)
     foreach(_plugin_dir platforms xcbglintegrations platforminputcontexts imageformats tls)
@@ -168,15 +179,15 @@ else()
     # Dependencies are resolved from the build-tree executable and Qt's own plugin files, whose run paths point at
     # the Conan packages (the installed copies only find their libraries once lib/ is filled).
     install(CODE "
-        set(_novelwriter_exe \"$<TARGET_FILE:novelwriter>\")
-        set(_novelwriter_plugins \"${_qt_plugins}\")
-        set(_novelwriter_qt_lib \"${_qt_prefix}/lib\")
+        set(_novelclanker_exe \"$<TARGET_FILE:novelclanker>\")
+        set(_novelclanker_plugins \"${_qt_plugins}\")
+        set(_novelclanker_qt_lib \"${_qt_prefix}/lib\")
     ")
     install(CODE [[
         file(GET_RUNTIME_DEPENDENCIES
-            EXECUTABLES "${_novelwriter_exe}"
-            MODULES ${_novelwriter_plugins}
-            DIRECTORIES "${_novelwriter_qt_lib}"
+            EXECUTABLES "${_novelclanker_exe}"
+            MODULES ${_novelclanker_plugins}
+            DIRECTORIES "${_novelclanker_qt_lib}"
             RESOLVED_DEPENDENCIES_VAR _libs
             UNRESOLVED_DEPENDENCIES_VAR _missing
             POST_EXCLUDE_REGEXES "^/lib/" "^/lib64/" "^/usr/")
@@ -194,38 +205,38 @@ include(CTest)
 if(BUILD_TESTING)
     add_executable(novelstore_test tests/NovelStoreTest.cpp)
     target_link_libraries(novelstore_test PRIVATE novelstore RocksDB::rocksdb) # RocksDB: writes old formats
-    novelwriter_warnings(novelstore_test)
+    novelclanker_warnings(novelstore_test)
     add_test(NAME novelstore COMMAND novelstore_test "${CMAKE_CURRENT_BINARY_DIR}/test-data")
 
     add_executable(lmstudio_test tests/LmStudioClientTest.cpp)
     target_link_libraries(lmstudio_test PRIVATE novelai)
-    novelwriter_warnings(lmstudio_test)
+    novelclanker_warnings(lmstudio_test)
     add_test(NAME lmstudio COMMAND lmstudio_test)
 
     add_executable(settings_test tests/SettingsDialogTest.cpp)
     target_link_libraries(settings_test PRIVATE novelui)
-    novelwriter_warnings(settings_test)
+    novelclanker_warnings(settings_test)
     add_test(NAME settings COMMAND settings_test)
 
     add_executable(chat_test tests/ChatCompletionTest.cpp)
     target_link_libraries(chat_test PRIVATE novelai)
-    novelwriter_warnings(chat_test)
+    novelclanker_warnings(chat_test)
     add_test(NAME chat COMMAND chat_test)
 
     add_executable(planstructure_test tests/PlanStructureTest.cpp)
     target_link_libraries(planstructure_test PRIVATE novelai novelstore)
-    novelwriter_warnings(planstructure_test)
+    novelclanker_warnings(planstructure_test)
     add_test(NAME planstructure COMMAND planstructure_test)
 
     add_executable(prose_test tests/ProsePromptTest.cpp)
     target_link_libraries(prose_test PRIVATE novelai)
-    novelwriter_warnings(prose_test)
+    novelclanker_warnings(prose_test)
     add_test(NAME prose COMMAND prose_test)
 
     add_executable(mainwindow_test tests/MainWindowTest.cpp)
     find_package(Qt6 REQUIRED COMPONENTS Test) # QTest::keyClick: real key presses, shortcuts included
     target_link_libraries(mainwindow_test PRIVATE novelui Qt6::Test)
-    novelwriter_warnings(mainwindow_test)
+    novelclanker_warnings(mainwindow_test)
     add_test(NAME mainwindow COMMAND mainwindow_test "${CMAKE_CURRENT_BINARY_DIR}/test-data-ui")
 
     # Widget tests run headless: Qt's "minimal" platform never shows a window.

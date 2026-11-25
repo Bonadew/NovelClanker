@@ -1,6 +1,6 @@
 @echo off
-rem Builds NovelWriter on Windows and puts a ready-to-run copy in dist\:
-rem double-click dist\NovelWriter.exe (or copy the whole dist folder to another PC).
+rem Builds NovelClanker on Windows and puts a ready-to-run copy in dist\:
+rem double-click dist\NovelClanker.exe (or copy the whole dist folder to another PC).
 rem
 rem   build.bat          dependencies (first run: can take an hour), build, dist\
 rem   build.bat test     the same, and runs the tests before making dist\
@@ -36,8 +36,8 @@ if not "%CONAN_HOME%"=="%CONAN_HOME: =%" (
 )
 
 rem The executable can't be replaced while it runs.
-tasklist /fi "imagename eq NovelWriter.exe" 2>nul | find /i "NovelWriter.exe" >nul && (
-    echo ERROR: NovelWriter is running. Close it and run build.bat again.
+tasklist /fi "imagename eq NovelClanker.exe" 2>nul | find /i "NovelClanker.exe" >nul && (
+    echo ERROR: NovelClanker is running. Close it and run build.bat again.
     goto :fail
 )
 
@@ -76,14 +76,14 @@ echo.
 echo === Creating dist\ ===
 if exist dist rmdir /s /q dist
 cmake --install build\Release --prefix dist || goto :fail
-if not exist dist\NovelWriter.exe (
-    echo ERROR: dist\NovelWriter.exe was not created.
+if not exist dist\NovelClanker.exe (
+    echo ERROR: dist\NovelClanker.exe was not created.
     goto :fail
 )
 
 echo.
-echo Done. Double-click dist\NovelWriter.exe to start NovelWriter.
-echo The dist folder is self-contained: copy all of it to run NovelWriter on another PC.
+echo Done. Double-click dist\NovelClanker.exe to start NovelClanker.
+echo The dist folder is self-contained: copy all of it to run NovelClanker on another PC.
 call :pause_if_double_clicked
 exit /b 0
 

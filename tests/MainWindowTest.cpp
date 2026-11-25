@@ -718,8 +718,8 @@ void testTheme(const fs::path &dir)
         switchTheme->trigger(); // light -> dark
         EXPECT(dark->isChecked() && Theme::isDark(QApplication::palette()));
 
-        // Optional: NOVELWRITER_SCREENSHOT_DIR=<dir> (with QT_QPA_PLATFORM=offscreen) saves light.png and dark.png.
-        if (const QString shots = qEnvironmentVariable("NOVELWRITER_SCREENSHOT_DIR"); !shots.isEmpty()) {
+        // Optional: NOVELCLANKER_SCREENSHOT_DIR=<dir> (with QT_QPA_PLATFORM=offscreen) saves light.png and dark.png.
+        if (const QString shots = qEnvironmentVariable("NOVELCLANKER_SCREENSHOT_DIR"); !shots.isEmpty()) {
             scene->setPlainText("# Chapter One\n\nThe harbour was **quiet**, and the gulls\n> watched from the "
                                 "breakwater.\n\n- a list item\n- `code`");
             w.resize(1100, 700);
@@ -810,7 +810,7 @@ void testTextSize(const fs::path &dir)
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
-    QApplication::setOrganizationName("NovelWriterTests");
+    QApplication::setOrganizationName("NovelClankerTests");
     QApplication::setApplicationName("MainWindowTest");
     QSettings().clear();
     if (argc != 2) {

@@ -10,7 +10,7 @@ from strictdoc.core.project_config import ProjectConfig
 
 def create_config() -> ProjectConfig:
     return ProjectConfig(
-        project_title="NovelWriter",
+        project_title="NovelClanker",
         project_features=[
             "TABLE_SCREEN",
             "TRACEABILITY_SCREEN",

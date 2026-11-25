@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds NovelWriter on Linux and puts a self-contained copy in dist/: start it with dist/NovelWriter
+# Builds NovelClanker on Linux and puts a self-contained copy in dist/: start it with dist/NovelClanker
 # (or double-click it in a file manager), or copy the whole dist folder to another machine.
 #
 #   ./build.sh         dependencies (the first run builds Qt and RocksDB from source: can take an hour), build, dist/
@@ -56,8 +56,8 @@ if [[ -d "$tools_venv/bin" ]]; then
 fi
 
 # The executable can't be replaced while it runs.
-if pgrep -x NovelWriter >/dev/null 2>&1; then
-    fail "NovelWriter is running. Close it and run build.sh again."
+if pgrep -x NovelClanker >/dev/null 2>&1; then
+    fail "NovelClanker is running. Close it and run build.sh again."
 fi
 
 # --- Dependencies (Qt, RocksDB), built once and cached by Conan ----------------------------------------------
@@ -75,9 +75,11 @@ fi
 
 # build/linux/Release (presets "conan-linux-release"), so a Windows build in the same checkout is not touched.
 # gnu20, not c++20: with GCC, Qt needs the GNU dialect for 128-bit integers and fails to build in strict mode.
+# skip_binaries=False keeps the libraries built into Qt in the graph, so their licenses ship in dist/licenses.
 conan install . --build=missing \
     -s build_type=Release -s compiler.cppstd=gnu20 \
     -c tools.cmake.cmaketoolchain:generator=Ninja \
+    -c tools.graph:skip_binaries=False \
     -c "tools.cmake.cmake_layout:build_folder_vars=['settings.os']" \
     -c tools.system.package_manager:mode=$package_mode \
     -c tools.system.package_manager:sudo=True ||
@@ -104,8 +106,8 @@ echo
 echo "=== Creating dist/ ==="
 rm -rf dist
 cmake --install build/linux/Release --prefix dist
-[[ -x dist/NovelWriter ]] || fail "dist/NovelWriter was not created."
+[[ -x dist/NovelClanker ]] || fail "dist/NovelClanker was not created."
 
 echo
-echo "Done. Start NovelWriter with dist/NovelWriter (or double-click it in a file manager)."
-echo "The dist folder is self-contained: copy all of it to run NovelWriter on another machine."
+echo "Done. Start NovelClanker with dist/NovelClanker (or double-click it in a file manager)."
+echo "The dist folder is self-contained: copy all of it to run NovelClanker on another machine."

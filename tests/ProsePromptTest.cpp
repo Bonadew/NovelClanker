@@ -178,13 +178,13 @@ void testCleanProse()
     EXPECT(cleanProse("She wrote a < b on the board.") == "She wrote a < b on the board.");
 }
 
-// Optional live check against LM Studio: NOVELWRITER_LIVE_LMSTUDIO=<server> NOVELWRITER_LIVE_PROSE_MODEL=<model>
+// Optional live check against LM Studio: NOVELCLANKER_LIVE_LMSTUDIO=<server> NOVELCLANKER_LIVE_PROSE_MODEL=<model>
 // expands a one-sentence sketch to each length (and writes a scene from a brief) and prints the word counts.
 // @relation(NFR-12, scope=function)
 void liveLengths()
 {
-    const QString server = qEnvironmentVariable("NOVELWRITER_LIVE_LMSTUDIO");
-    const QString model = qEnvironmentVariable("NOVELWRITER_LIVE_PROSE_MODEL");
+    const QString server = qEnvironmentVariable("NOVELCLANKER_LIVE_LMSTUDIO");
+    const QString model = qEnvironmentVariable("NOVELCLANKER_LIVE_PROSE_MODEL");
     if (server.isEmpty() || model.isEmpty()) {
         return;
     }
@@ -219,16 +219,16 @@ void liveLengths()
     const QString before = "Elin sat at the kitchen table with her tea going cold.";
     const QString passage = "She unrolls the old harbour map and sees that Rope Street is missing.";
     const QString after = "The phone rang in the hall.";
-    const int runs = qEnvironmentVariableIntValue("NOVELWRITER_LIVE_RUNS") > 0
-                         ? qEnvironmentVariableIntValue("NOVELWRITER_LIVE_RUNS")
+    const int runs = qEnvironmentVariableIntValue("NOVELCLANKER_LIVE_RUNS") > 0
+                         ? qEnvironmentVariableIntValue("NOVELCLANKER_LIVE_RUNS")
                          : 1;
-    if (!qEnvironmentVariableIsSet("NOVELWRITER_LIVE_OPENING_ONLY")) {
+    if (!qEnvironmentVariableIsSet("NOVELCLANKER_LIVE_OPENING_ONLY")) {
         for (const int target : {200, 500}) {
             for (int i = 0; i < runs; ++i) {
                 const QString text = removeEcho(run(expandMessages(context, before, passage, after, target), target), after);
                 std::printf("expand to %d: %lld words\n", target, static_cast<long long>(words(text)));
                 std::fflush(stdout);
-                if (qEnvironmentVariableIsSet("NOVELWRITER_LIVE_SHOW")) {
+                if (qEnvironmentVariableIsSet("NOVELCLANKER_LIVE_SHOW")) {
                     std::printf("---\n%s\n---\n", qPrintable(text));
                 }
             }
@@ -249,12 +249,12 @@ void liveLengths()
         std::printf("expand opening to 200: %lld words%s\n", static_cast<long long>(words(text)),
                     text == raw ? "" : qPrintable(QStringLiteral(" (repeat of the following text cut; %1 before)")
                                                       .arg(words(raw))));
-        if (qEnvironmentVariableIsSet("NOVELWRITER_LIVE_SHOW")) {
+        if (qEnvironmentVariableIsSet("NOVELCLANKER_LIVE_SHOW")) {
             std::printf("---\n%s\n---\n", qPrintable(raw));
         }
         std::fflush(stdout);
     }
-    if (qEnvironmentVariableIsSet("NOVELWRITER_LIVE_OPENING_ONLY")) {
+    if (qEnvironmentVariableIsSet("NOVELCLANKER_LIVE_OPENING_ONLY")) {
         return;
     }
     const QString scene = run(sceneMessages(context, 500), 500);

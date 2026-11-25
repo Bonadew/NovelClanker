@@ -25,7 +25,7 @@ class StorageError : public std::runtime_error
 // of their children. Structural changes therefore never rewrite scene text. Key layout (<id> is a
 // zero-padded 20-digit number; ids are unique across all node kinds and never reused):
 //
-//   novel/format          format version ("3")
+//   novel/format          format version ("1"); other versions are refused
 //   novel/next_id         next unused id (decimal)
 //   novel/acts            act ids in order (comma-separated decimals)
 //   act/<id>/title        act title
@@ -46,8 +46,6 @@ class StorageError : public std::runtime_error
 //   plan/<id>/model       id of the model that generated the plan; absent for plans written by hand
 //   plan/<id>/template    id of the plan template it was generated with (optional)
 //   plan/<id>/chat        conversation about the plan (JSON, owned by the UI; optional)
-//
-// Format 2 novels (a single "novel/plan" entry) are upgraded to format 3 when opened.
 //
 // The structure (titles and ordering) is loaded into memory on open; scene text is read on demand.
 // RocksDB locks the database while it is open, so a novel can only be opened by one NovelStore (or
@@ -191,7 +189,6 @@ class NovelStore
     std::optional<Location> locate(Id id) const;
     Location require(Id id, std::optional<Kind> kind = std::nullopt) const;
     std::size_t requirePlan(Id plan) const;
-    void upgradeFromFormat2();
 
     std::filesystem::path m_path;
     std::unique_ptr<rocksdb::DB> m_db;

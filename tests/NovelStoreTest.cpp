@@ -335,18 +335,24 @@ void testPlanModelOverride(const fs::path &dir)
     EXPECT(store.planModelOverride().empty());
 }
 
-// Writes a novel in format 2 (single "novel/plan" entry) directly with RocksDB.
-void writeFormat2Novel(const fs::path &dir, const std::string &plan)
+// Opens a novel's database directly with RocksDB (bypassing NovelStore).
+std::unique_ptr<rocksdb::DB> openRaw(const fs::path &dir, bool create)
 {
     rocksdb::Options options;
-    options.create_if_missing = true;
+    options.create_if_missing = create;
     options.compression = rocksdb::kLZ4Compression;
     std::unique_ptr<rocksdb::DB> db;
     const auto u8 = dir.u8string();
-    rocksdb::Status s = rocksdb::DB::Open(options, std::string(u8.begin(), u8.end()), &db);
-    EXPECT(s.ok());
+    EXPECT(rocksdb::DB::Open(options, std::string(u8.begin(), u8.end()), &db).ok());
+    return db;
+}
+
+// Writes a complete-looking novel with the given format version directly with RocksDB.
+void writeNovelWithFormat(const fs::path &dir, const std::string &format)
+{
+    auto db = openRaw(dir, true);
     rocksdb::WriteBatch batch;
-    batch.Put("novel/format", "2");
+    batch.Put("novel/format", format);
     batch.Put("novel/next_id", "4");
     batch.Put("novel/acts", "1");
     batch.Put("act/00000000000000000001/title", "Act 1");
@@ -355,39 +361,38 @@ void writeFormat2Novel(const fs::path &dir, const std::string &plan)
     batch.Put("chapter/00000000000000000002/scenes", "3");
     batch.Put("scene/00000000000000000003/title", "Scene 1");
     batch.Put("scene/00000000000000000003/text", "Once.");
-    batch.Put("novel/synopsis", "A synopsis.");
-    if (!plan.empty()) {
-        batch.Put("novel/plan", plan);
-    }
+    batch.Put("novel/plans", "");
     EXPECT(db->Write({}, &batch).ok());
     db->Close();
 }
 
-// @relation(DAT-7, scope=function)
-void testUpgradeFromFormat2(const fs::path &root)
+std::string storedFormat(const fs::path &dir)
 {
+    auto db = openRaw(dir, false);
+    std::string format;
+    EXPECT(db->Get({}, "novel/format", &format).ok());
+    db->Close();
+    return format;
+}
+
+// New novels are format 1, the only format; any other version is refused and the novel left unchanged.
+// @relation(DAT-7, scope=function)
+void testFormatVersion(const fs::path &root)
+{
+    const fs::path current = root / "current.novel";
+    { NovelStore store(current, NovelStore::Mode::Create); }
+    EXPECT(storedFormat(current) == "1");
+    writeNovelWithFormat(root / "written-v1.novel", "1");
     {
-        const fs::path dir = root / "format2.novel";
-        writeFormat2Novel(dir, "# Old plan\n");
-        {
-            NovelStore store(dir, NovelStore::Mode::Open);
-            EXPECT(planOutline(store) == "Plan 1[hand]"); // how it was made wasn't recorded
-            EXPECT(store.planText(store.plans().at(0).id) == "# Old plan\n");
-            EXPECT(store.plans().at(0).id == 4); // next free id
-            EXPECT(store.synopsis() == "A synopsis.");
-            EXPECT(outline(store) == "Act 1[Chapter 1(Scene 1)]");
-            EXPECT(store.addAct(1, "Act 2") == 5);
-        }
-        NovelStore store(dir, NovelStore::Mode::Open); // now format 3: opens without upgrading again
-        EXPECT(planOutline(store) == "Plan 1[hand]");
-        EXPECT(outline(store) == "Act 1[Chapter 1(Scene 1)] Act 2[]");
+        NovelStore store(root / "written-v1.novel", NovelStore::Mode::Open);
+        EXPECT(outline(store) == "Act 1[Chapter 1(Scene 1)]");
+        EXPECT(store.sceneText(3) == "Once.");
     }
-    {
-        const fs::path dir = root / "format2-noplan.novel";
-        writeFormat2Novel(dir, "");
-        NovelStore store(dir, NovelStore::Mode::Open);
-        EXPECT(store.plans().empty());
-        EXPECT(store.addPlan("P", "") == 4);
+    for (const std::string version : {"2", "3", "99", ""}) {
+        const fs::path dir = root / ("format-" + version + ".novel");
+        writeNovelWithFormat(dir, version);
+        EXPECT(throws<StorageError>([&] { NovelStore store(dir, NovelStore::Mode::Open); }));
+        EXPECT(storedFormat(dir) == version); // not converted or touched
     }
 }
 
@@ -430,7 +435,7 @@ int main(int argc, char **argv)
         testPlanChat(root / "chat.novel");
         testPlanTemplates(root / "templates.novel");
         testBriefsAndImport(root / "import.novel");
-        testUpgradeFromFormat2(root);
+        testFormatVersion(root);
         testErrors(root);
     } catch (const std::exception &e) {
         std::fprintf(stderr, "FAIL: unexpected exception: %s\n", e.what());

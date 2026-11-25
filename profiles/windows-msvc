@@ -15,3 +15,6 @@ tools.cmake.cmaketoolchain:generator=Ninja
 # novels can live in folders with non-ASCII names.
 # (Must be a cache variable: RocksDB's option() ignores normal variables under its CMake policy settings.)
 rocksdb/*:tools.cmake.cmaketoolchain:extra_variables={"WITH_WINDOWS_UTF8_FILENAMES": {"value": "ON", "cache": True, "type": "BOOL"}}
+# Keep static libraries that are built into Qt's DLLs (zlib, pcre2, libpng, ...) in the dependency graph instead of
+# skipping them, so conanfile.py can ship their license files with the app.
+tools.graph:skip_binaries=False

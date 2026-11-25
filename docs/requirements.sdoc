@@ -1,5 +1,5 @@
 [DOCUMENT]
-TITLE: NovelWriter: Software Requirements Specification
+TITLE: NovelClanker: Software Requirements Specification
 OPTIONS:
   VIEW_STYLE: Table
 
@@ -52,7 +52,7 @@ ELEMENTS:
 
 [TEXT]
 STATEMENT: >>>
-NovelWriter is a cross-platform desktop application for planning and writing novels with help from local language models. This specification records what the application must do, as built on the ``prose-writer`` branch, and what is planned next.
+NovelClanker is a cross-platform desktop application for planning and writing novels with help from local language models. This specification records what the application must do, as built on the ``prose-writer`` branch, and what is planned next.
 <<<
 
 [[SECTION]]
@@ -871,7 +871,7 @@ UID: DAT-3
 PRIORITY: Must
 STATUS: Implemented
 STATEMENT: >>>
-Every change that touches several entries (add, move, delete, structure import, format upgrade) is written atomically in one batch.
+Every change that touches several entries (add, move, delete, structure import) is written atomically in one batch.
 <<<
 
 [REQUIREMENT]
@@ -903,7 +903,7 @@ UID: DAT-7
 PRIORITY: Must
 STATUS: Implemented
 STATEMENT: >>>
-A novel in format 2 (single ``novel/plan``) is upgraded to format 3 in one atomic write when opened; its plan becomes "Plan 1" with no recorded model. An unknown format version is refused, not guessed.
+A new novel is written in format 1, the only format. A novel with any other format version is refused when opened, before anything is read from or written to it; it is never converted or guessed.
 <<<
 
 [REQUIREMENT]
@@ -1173,6 +1173,15 @@ STATUS: Implemented
 AREA: Testability
 STATEMENT: >>>
 Optional live checks run the same code against a real LM Studio when environment variables are set, including prose length and repeat checks.
+<<<
+
+[REQUIREMENT]
+UID: NFR-13
+PRIORITY: Must
+STATUS: Implemented
+AREA: Licensing
+STATEMENT: >>>
+NovelClanker is licensed under GPL-3.0-or-later (``LICENSE``). Every self-contained folder (``cmake --install``) contains ``LICENSE.txt``, a ``THIRD-PARTY-NOTICES.txt`` listing each bundled library with its version, license and homepage, and each library's license files in ``licenses/<name>/``, including libraries built into Qt's shared libraries. Qt stays a set of replaceable shared libraries (LGPL-3.0).
 <<<
 
 [[/SECTION]]

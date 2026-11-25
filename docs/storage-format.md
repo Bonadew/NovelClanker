@@ -7,7 +7,7 @@ children, so restructuring never rewrites scene text. Ids are unique across all 
 
 | Key                   | Value                                   |
 |-----------------------|-----------------------------------------|
-| `novel/format`        | format version (`3`)                    |
+| `novel/format`        | format version (`1`)                    |
 | `novel/next_id`       | next unused id                          |
 | `novel/acts`          | act ids in order, comma-separated       |
 | `act/<id>/title`      | act title                               |
@@ -29,8 +29,8 @@ children, so restructuring never rewrites scene text. Ids are unique across all 
 | `plan/<id>/template`  | template it was generated with (optional) |
 | `plan/<id>/chat`      | conversation about the plan (JSON)      |
 
-Novels from earlier versions (format 2, with a single `novel/plan`) are upgraded when opened: that plan
-becomes "Plan 1". Its model wasn't recorded then, so it shows as "(by hand)".
+Format 1 is the only format. A novel with any other format version is refused when opened, and left
+unchanged.
 
 Writes are synced to disk and multi-key changes are atomic (RocksDB write batches). RocksDB locks an open
-novel, so only one NovelWriter can have it open at a time. See [src/NovelStore.h](../src/NovelStore.h).
+novel, so only one NovelClanker can have it open at a time. See [src/NovelStore.h](../src/NovelStore.h).

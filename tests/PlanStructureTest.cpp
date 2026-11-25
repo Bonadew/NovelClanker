@@ -1,4 +1,4 @@
-// Tests for PlanStructure::parse(). Optional: set NOVELWRITER_PARSE_PLAN=<plan file> to print what a real
+// Tests for PlanStructure::parse(). Optional: set NOVELCLANKER_PARSE_PLAN=<plan file> to print what a real
 // plan parses into.
 
 #include "NovelStore.h"
@@ -283,7 +283,7 @@ void testNothingToFind()
 
 void printRealPlan()
 {
-    const QString path = qEnvironmentVariable("NOVELWRITER_PARSE_PLAN");
+    const QString path = qEnvironmentVariable("NOVELCLANKER_PARSE_PLAN");
     if (path.isEmpty()) {
         return;
     }
@@ -306,18 +306,18 @@ void printRealPlan()
     }
 }
 
-// Optional: set NOVELWRITER_PARSE_NOVEL=<novel folder> to parse every plan in a novel and report briefs that
+// Optional: set NOVELCLANKER_PARSE_NOVEL=<novel folder> to parse every plan in a novel and report briefs that
 // look like they swallowed a heading (use a copy: opening a novel may write RocksDB housekeeping files).
 void checkNovelPlans()
 {
-    const QString path = qEnvironmentVariable("NOVELWRITER_PARSE_NOVEL");
+    const QString path = qEnvironmentVariable("NOVELCLANKER_PARSE_NOVEL");
     if (path.isEmpty()) {
         return;
     }
     NovelStore store(std::filesystem::path(path.toStdU16String()), NovelStore::Mode::Open);
     static const QRegularExpression heading(QStringLiteral(R"(\b(Act|Chapter)\s+[0-9IVX]+)"),
                                             QRegularExpression::CaseInsensitiveOption);
-    const QString dumpDir = qEnvironmentVariable("NOVELWRITER_DUMP_PLANS"); // optional: write each plan's text here
+    const QString dumpDir = qEnvironmentVariable("NOVELCLANKER_DUMP_PLANS"); // optional: write each plan's text here
     for (const auto &plan : store.plans()) {
         if (!dumpDir.isEmpty()) {
             QFile out(dumpDir + "/" + QString::fromStdString(plan.title) + ".md");

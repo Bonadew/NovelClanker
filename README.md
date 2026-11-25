@@ -1,4 +1,4 @@
-# NovelWriter
+# NovelClanker
 
 A cross-platform Markdown-style editor for writing novels, built with C++20 and Qt 6 Widgets.
 Runs on Windows, Linux, and macOS.
@@ -125,7 +125,7 @@ questions. The plan has a fixed Markdown shape that mirrors the app's acts, chap
 ## Storage
 
 A novel is a [RocksDB](https://rocksdb.org) database folder (conventionally named `*.novel`) in which every
-scene's text is a separate entry. The keys, format versions and upgrades are described in
+scene's text is a separate entry. The keys and the format version are described in
 [docs/storage-format.md](docs/storage-format.md).
 
 ## Requirements
@@ -144,7 +144,7 @@ which can take an hour or more. The result is cached in `~/.conan2`, so later in
 ### Windows (MSVC + Ninja)
 
 **Quick way:** run `build.bat` (double-click it, or run it in a terminal). It checks the tools, installs the
-dependencies with Conan, builds, and puts a self-contained copy in `dist\`: double-click `dist\NovelWriter.exe`,
+dependencies with Conan, builds, and puts a self-contained copy in `dist\`: double-click `dist\NovelClanker.exe`,
 or copy the whole `dist` folder to another PC. `build.bat test` also runs the tests first. The first run builds Qt
 and RocksDB from source and can take an hour; later runs take a minute or two. It needs Visual Studio 2026 Build
 Tools (C++ workload), CMake 3.23+ and Conan 2 (`pip install conan`). If your user folder contains a space, set
@@ -166,7 +166,7 @@ cmake --build --preset conan-release
 ```
 
 Each build copies the Qt DLLs and plugins next to the executable (via `windeployqt`), so
-`build\Release\NovelWriter.exe` starts directly: double-click it, or run it from an IDE or debugger.
+`build\Release\NovelClanker.exe` starts directly: double-click it, or run it from an IDE or debugger.
 
 If your Windows user folder contains a space (e.g. `C:\Users\First Last`), move Conan's package storage to a
 path without spaces first, since several dependency build tools break on spaces. Add this to
@@ -180,7 +180,7 @@ core.cache:storage_path = E:/conan2/p
 
 **Quick way on Linux:** run `./build.sh` (`./build.sh test` also runs the tests). It installs the dependencies
 with Conan, builds in `build/linux/Release` (so a Windows build in the same checkout isn't touched), and puts a
-self-contained copy in `dist/`: start `dist/NovelWriter`, or copy the whole `dist` folder to another machine. It
+self-contained copy in `dist/`: start `dist/NovelClanker`, or copy the whole `dist` folder to another machine. It
 needs a C++20 compiler (g++ 11+) and Python 3 with venv. If CMake 3.23+, Conan 2 or Ninja are missing or too old,
 it installs them into a private environment in `build/linux-tools`, not system-wide. Missing X11/OpenGL
 development packages are installed with `sudo` when you run it from a terminal (you'll be asked for your
@@ -198,26 +198,26 @@ conan profile detect            # one-time: create a default profile for your co
 conan install . -s compiler.cppstd=20 --build=missing
 cmake --preset conan-release
 cmake --build --preset conan-release
-./build/Release/NovelWriter      # macOS: open build/Release/NovelWriter.app
+./build/Release/NovelClanker      # macOS: open build/Release/NovelClanker.app
 ```
 
 Run the tests with `ctest --test-dir build/Release --output-on-failure`. They're self-contained: the LM Studio
 tests use a fake server and the window tests run headless (no window appears). Optional checks against a real
-LM Studio (`NOVELWRITER_LIVE_LMSTUDIO=http://127.0.0.1:1234`):
+LM Studio (`NOVELCLANKER_LIVE_LMSTUDIO=http://127.0.0.1:1234`):
 
 - `settings_test` also lists the server's models in the settings view.
-- `chat_test` with `NOVELWRITER_LIVE_PLANNER_MODEL=<model id>` also generates a plan from a sample synopsis
-  (written to `NOVELWRITER_LIVE_PLAN_OUT` if set). With `NOVELWRITER_LIVE_REFINE_PLAN=<plan file>` and
-  `NOVELWRITER_LIVE_REFINE_REQUEST="..."` it refines that plan through the plan chat instead.
-  `NOVELWRITER_LIVE_TEMPLATE=<template id>` (`three-act`, `inner-stages`) and
-  `NOVELWRITER_LIVE_SYNOPSIS_FILE=<file>` choose the template and replace the sample synopsis.
-- `prose_test` with `NOVELWRITER_LIVE_PROSE_MODEL=<model id>` expands a one-sentence sketch to 200 and 500 words,
+- `chat_test` with `NOVELCLANKER_LIVE_PLANNER_MODEL=<model id>` also generates a plan from a sample synopsis
+  (written to `NOVELCLANKER_LIVE_PLAN_OUT` if set). With `NOVELCLANKER_LIVE_REFINE_PLAN=<plan file>` and
+  `NOVELCLANKER_LIVE_REFINE_REQUEST="..."` it refines that plan through the plan chat instead.
+  `NOVELCLANKER_LIVE_TEMPLATE=<template id>` (`three-act`, `inner-stages`) and
+  `NOVELCLANKER_LIVE_SYNOPSIS_FILE=<file>` choose the template and replace the sample synopsis.
+- `prose_test` with `NOVELCLANKER_LIVE_PROSE_MODEL=<model id>` expands a one-sentence sketch to 200 and 500 words,
   expands an opening sentence that a long paragraph follows (reporting repeats of that paragraph;
-  `NOVELWRITER_LIVE_OPENING_ONLY=1` runs only this) and writes a 500-word scene, printing the word counts
-  (`NOVELWRITER_LIVE_RUNS=<n>` repeats each, `NOVELWRITER_LIVE_SHOW=1` prints the text).
+  `NOVELCLANKER_LIVE_OPENING_ONLY=1` runs only this) and writes a 500-word scene, printing the word counts
+  (`NOVELCLANKER_LIVE_RUNS=<n>` repeats each, `NOVELCLANKER_LIVE_SHOW=1` prints the text).
 
 To see how plans are read into acts/chapters/scenes, run `planstructure_test` with
-`NOVELWRITER_PARSE_PLAN=<plan file>`, or with `NOVELWRITER_PARSE_NOVEL=<novel folder>` to check every plan in
+`NOVELCLANKER_PARSE_PLAN=<plan file>`, or with `NOVELCLANKER_PARSE_NOVEL=<novel folder>` to check every plan in
 a novel (it flags briefs that swallowed a heading). Use a copy of the novel: opening it can write RocksDB
 housekeeping files.
 
@@ -254,9 +254,31 @@ cmake --install build/Release --prefix dist
 ```
 
 On Windows, `dist/` becomes a self-contained folder (Qt and the MSVC runtime included) that runs on machines
-without any SDKs. On macOS, the install step runs `macdeployqt` on `dist/NovelWriter.app` to bundle Qt (not yet
+without any SDKs. On macOS, the install step runs `macdeployqt` on `dist/NovelClanker.app` to bundle Qt (not yet
 tested). Linux packaging (e.g. AppImage) isn't set up yet; run the binary from the build tree there.
 
 ## Project layout
 
 See [docs/project-layout.md](docs/project-layout.md) for what lives where in the repository.
+
+## License
+
+Copyright (C) 2026 The NovelClanker authors
+
+NovelClanker is free software: you can redistribute it and/or modify it under the terms of the GNU General
+Public License as published by the Free Software Foundation, either version 3 of the License, or (at your
+option) any later version.
+
+NovelClanker is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the
+implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+more details.
+
+You should have received a copy of the GNU General Public License along with NovelClanker (see
+[LICENSE](LICENSE)). If not, see <https://www.gnu.org/licenses/>.
+
+NovelClanker uses [Qt](https://www.qt.io) under the GNU LGPL v3 and [RocksDB](https://rocksdb.org) under the
+Apache License 2.0 (RocksDB is dual-licensed with GPLv2).
+
+The self-contained `dist` folder made by `build.bat`, `build.sh` or `cmake --install` contains `LICENSE.txt`,
+`THIRD-PARTY-NOTICES.txt` (every bundled library with its version, license and homepage, generated by
+`conanfile.py` from the Conan dependency graph) and each library's license files in `licenses/<name>/`.

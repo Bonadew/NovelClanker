@@ -15,8 +15,8 @@ int main(int argc, char *argv[])
     }
 #endif
     QApplication app(argc, argv);
-    QApplication::setApplicationName("NovelWriter");
-    QApplication::setOrganizationName("NovelWriter");
+    QApplication::setApplicationName("NovelClanker");
+    QApplication::setOrganizationName("NovelClanker");
     Theme::apply(Theme::load()); // light, dark or the system's, as chosen in View > Theme
 
     MainWindow window;

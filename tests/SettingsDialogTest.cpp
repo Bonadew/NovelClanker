@@ -1,6 +1,6 @@
 // Tests for the settings view, driven programmatically (run with QT_QPA_PLATFORM=minimal: no window appears).
 //
-// Optional live check: set NOVELWRITER_LIVE_LMSTUDIO=http://127.0.0.1:1234 to also open the dialog against a
+// Optional live check: set NOVELCLANKER_LIVE_LMSTUDIO=http://127.0.0.1:1234 to also open the dialog against a
 // real LM Studio server and print what it lists.
 
 #include "AiSettings.h"
@@ -176,14 +176,14 @@ int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
     // Keep test settings away from the real application's settings.
-    QApplication::setOrganizationName("NovelWriterTests");
+    QApplication::setOrganizationName("NovelClankerTests");
     QApplication::setApplicationName("SettingsDialogTest");
 
     testDefaults();
     testFetchSelectAndSave();
     testUnreachableKeepsSelection();
     testInvalidAddressNotSaved();
-    if (const QByteArray live = qgetenv("NOVELWRITER_LIVE_LMSTUDIO"); !live.isEmpty()) {
+    if (const QByteArray live = qgetenv("NOVELCLANKER_LIVE_LMSTUDIO"); !live.isEmpty()) {
         liveCheck(QString::fromUtf8(live));
     }
     QSettings().clear();
