@@ -145,6 +145,15 @@ which can take an hour or more. The result is cached in `~/.conan2`, so later in
 
 ### Windows (MSVC + Ninja)
 
+**Quick way:** run `build.bat` (double-click it, or run it in a terminal). It checks the tools, installs the
+dependencies with Conan, builds, and puts a self-contained copy in `dist\`: double-click `dist\NovelWriter.exe`,
+or copy the whole `dist` folder to another PC. `build.bat test` also runs the tests first. The first run builds Qt
+and RocksDB from source and can take an hour; later runs take a minute or two. It needs Visual Studio 2026 Build
+Tools (C++ workload), CMake 3.23+ and Conan 2 (`pip install conan`). If your user folder contains a space, set
+Conan's storage path first (see below); `build.bat` stops with instructions if it isn't set.
+
+The manual steps, which `build.bat` runs for you:
+
 A ready-made profile is in `profiles/windows-msvc` (Visual Studio 2026 / MSVC 19.5, C++20, Ninja).
 Edit `compiler.version` if you use another Visual Studio version (194 = VS 2022). The profile also builds
 RocksDB with UTF-8 file names so novels can live in folders with non-ASCII names.
@@ -170,6 +179,21 @@ core.cache:storage_path = E:/conan2/p
 ```
 
 ### Linux / macOS
+
+**Quick way on Linux:** run `./build.sh` (`./build.sh test` also runs the tests). It installs the dependencies
+with Conan, builds in `build/linux/Release` (so a Windows build in the same checkout isn't touched), and puts a
+self-contained copy in `dist/`: start `dist/NovelWriter`, or copy the whole `dist` folder to another machine. It
+needs a C++20 compiler (g++ 11+) and Python 3 with venv. If CMake 3.23+, Conan 2 or Ninja are missing or too old,
+it installs them into a private environment in `build/linux-tools`, not system-wide. Missing X11/OpenGL
+development packages are installed with `sudo` when you run it from a terminal (you'll be asked for your
+password); otherwise it lists them. Tested on Ubuntu 22.04.
+
+`dist/` contains the app, the Qt libraries (`lib/`) and Qt's plugins (`plugins/`). It uses the desktop's own
+system libraries: glibc, X11/xcb (including `libxcb-cursor0`, which Qt 6.5+ needs), OpenGL and fontconfig with the
+system font configuration (`/etc/fonts/fonts.conf`). It runs on distributions as new as, or newer than, the one it
+was built on.
+
+Manual steps (Linux and macOS):
 
 ```sh
 conan profile detect            # one-time: create a default profile for your compiler
@@ -241,6 +265,7 @@ tested). Linux packaging (e.g. AppImage) isn't set up yet; run the binary from t
 docs/requirements.sdoc    Software requirements specification (StrictDoc)
 strictdoc_config.py       StrictDoc project configuration
 tools/requirements-docs.txt  Documentation tooling (StrictDoc), installed into .venv
+build.bat                 Windows: builds everything and creates the double-clickable dist\ folder
 conanfile.py              Conan dependencies (Qt 6 qtbase incl. Network, RocksDB)
 profiles/windows-msvc     Conan profile for Windows (MSVC, C++20, Ninja)
 CMakeLists.txt            Build definition

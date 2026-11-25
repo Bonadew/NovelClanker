@@ -262,7 +262,7 @@ NovelStore::Id NovelStore::addAct(std::size_t position, std::string_view title)
 {
     const Id id = m_nextId;
     std::vector<Act> acts = m_acts;
-    acts.insert(clampedPos(acts, position), Act{id, std::string(title), {}});
+    acts.insert(clampedPos(acts, position), Act{id, std::string(title), {}, {}});
 
     rocksdb::WriteBatch batch;
     batch.Put(key("act", id, "title"), slice(title));
@@ -282,7 +282,7 @@ NovelStore::Id NovelStore::addChapter(Id actId, std::size_t position, std::strin
     const Id id = m_nextId;
     std::vector<Act> acts = m_acts;
     auto &chapters = acts[where.act].chapters;
-    chapters.insert(clampedPos(chapters, position), Chapter{id, std::string(title), {}});
+    chapters.insert(clampedPos(chapters, position), Chapter{id, std::string(title), {}, {}});
 
     rocksdb::WriteBatch batch;
     batch.Put(key("chapter", id, "title"), slice(title));
@@ -303,7 +303,7 @@ NovelStore::Id NovelStore::addScene(Id chapterId, std::size_t position, std::str
     const Id id = m_nextId;
     std::vector<Act> acts = m_acts;
     auto &scenes = acts[where.act].chapters[where.chapter].scenes;
-    scenes.insert(clampedPos(scenes, position), Scene{id, std::string(title)});
+    scenes.insert(clampedPos(scenes, position), Scene{id, std::string(title), {}});
 
     rocksdb::WriteBatch batch;
     batch.Put(key("scene", id, "title"), slice(title));

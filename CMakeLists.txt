@@ -146,6 +146,45 @@ elseif(APPLE)
             COMMAND \"${MACDEPLOYQT_EXECUTABLE}\" \"\${CMAKE_INSTALL_PREFIX}/NovelWriter.app\"
             COMMAND_ERROR_IS_FATAL ANY)
     ")
+else()
+    # Linux: a self-contained folder. NovelWriter finds the Qt libraries in lib/ (run path $ORIGIN/lib) and Qt
+    # finds its plugins in plugins/ (qt.conf). Qt's own libraries and plugins already look for each other at
+    # $ORIGIN and $ORIGIN/../../lib, so this layout needs no patching. System libraries (glibc, X11, xcb, OpenGL,
+    # fontconfig) are not copied: they come with every desktop.
+    set_target_properties(novelwriter PROPERTIES INSTALL_RPATH "$ORIGIN/lib")
+    get_filename_component(_qt_prefix "${QT_BIN_DIR}" DIRECTORY)
+    set(_qt_plugins)
+    foreach(_plugin_dir platforms xcbglintegrations platforminputcontexts imageformats tls)
+        file(GLOB _dir_plugins "${_qt_prefix}/plugins/${_plugin_dir}/*.so")
+        if(_dir_plugins)
+            install(FILES ${_dir_plugins} DESTINATION "plugins/${_plugin_dir}")
+            list(APPEND _qt_plugins ${_dir_plugins})
+        endif()
+    endforeach()
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/qt.conf" "[Paths]\nPrefix = .\nPlugins = plugins\n")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/qt.conf" DESTINATION .)
+    # Dependencies are resolved from the build-tree executable and Qt's own plugin files, whose run paths point at
+    # the Conan packages (the installed copies only find their libraries once lib/ is filled).
+    install(CODE "
+        set(_novelwriter_exe \"$<TARGET_FILE:novelwriter>\")
+        set(_novelwriter_plugins \"${_qt_plugins}\")
+        set(_novelwriter_qt_lib \"${_qt_prefix}/lib\")
+    ")
+    install(CODE [[
+        file(GET_RUNTIME_DEPENDENCIES
+            EXECUTABLES "${_novelwriter_exe}"
+            MODULES ${_novelwriter_plugins}
+            DIRECTORIES "${_novelwriter_qt_lib}"
+            RESOLVED_DEPENDENCIES_VAR _libs
+            UNRESOLVED_DEPENDENCIES_VAR _missing
+            POST_EXCLUDE_REGEXES "^/lib/" "^/lib64/" "^/usr/")
+        foreach(_lib IN LISTS _libs)
+            file(INSTALL "${_lib}" DESTINATION "${CMAKE_INSTALL_PREFIX}/lib" FOLLOW_SYMLINK_CHAIN)
+        endforeach()
+        if(_missing)
+            message(WARNING "Libraries not found (must be installed on the target system): ${_missing}")
+        endif()
+    ]])
 endif()
 
 # --- Tests ----------------------------------------------------------------------------------------------

@@ -6,6 +6,13 @@
 
 int main(int argc, char *argv[])
 {
+#if defined(Q_OS_LINUX)
+    // Qt's fontconfig is built into the app (Conan) and would look for its configuration in the build machine's
+    // package folder, find none, and then no fonts. Use the system's configuration, unless the user chose one.
+    if (qEnvironmentVariableIsEmpty("FONTCONFIG_FILE") && QFileInfo::exists("/etc/fonts/fonts.conf")) {
+        qputenv("FONTCONFIG_FILE", "/etc/fonts/fonts.conf");
+    }
+#endif
     QApplication app(argc, argv);
     QApplication::setApplicationName("NovelWriter");
     QApplication::setOrganizationName("NovelWriter");

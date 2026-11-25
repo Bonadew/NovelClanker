@@ -1057,7 +1057,7 @@ PRIORITY: Must
 STATUS: Implemented
 AREA: Deployment
 STATEMENT: >>>
-On Windows each build copies the Qt runtime next to the executable so it starts by double-click; ``cmake --install`` produces a self-contained folder including the MSVC runtime.
+On Windows each build copies the Qt runtime next to the executable so it starts by double-click; ``cmake --install`` produces a self-contained folder including the MSVC runtime. On Linux ``cmake --install`` produces a self-contained folder with the Qt libraries and plugins, relying only on the desktop's system libraries. ``build.bat`` (Windows) and ``build.sh`` (Linux) run every step from dependencies to that folder.
 <<<
 
 [REQUIREMENT]
@@ -1167,7 +1167,7 @@ UID: PLN-4
 PRIORITY: Should
 STATUS: Planned
 STATEMENT: >>>
-Test on macOS and Linux, and package for Linux (e.g. AppImage).
+Test on macOS, and package for Linux distributions (e.g. AppImage). Building and testing on Linux (Ubuntu 22.04) is done.
 <<<
 
 [REQUIREMENT]
