@@ -263,6 +263,30 @@ void testBriefsAndImport(const fs::path &dir)
     EXPECT(store.acts().empty());
 }
 
+void testPlanTemplates(const fs::path &dir)
+{
+    Id staged = 0, hand = 0;
+    {
+        NovelStore store(dir, NovelStore::Mode::Create);
+        EXPECT(store.planTemplate().empty()); // default template
+        store.setPlanTemplate("inner-stages");
+        staged = store.addPlan("Plan 1", "# Plan", "model-a", "inner-stages");
+        hand = store.addPlan("Plan 2", "# Mine");
+        EXPECT(store.plans()[0].templateId == "inner-stages" && store.plans()[1].templateId.empty());
+    }
+    {
+        NovelStore store(dir, NovelStore::Mode::Open);
+        EXPECT(store.planTemplate() == "inner-stages");
+        EXPECT(store.plans()[0].templateId == "inner-stages" && store.plans()[0].model == "model-a");
+        EXPECT(store.plans()[1].templateId.empty());
+        store.setPlanTemplate(""); // back to the default
+        store.removePlan(staged);
+    }
+    NovelStore store(dir, NovelStore::Mode::Open);
+    EXPECT(store.planTemplate().empty());
+    EXPECT(store.plans().size() == 1 && store.plans()[0].id == hand);
+}
+
 void testPlanChat(const fs::path &dir)
 {
     Id plan = 0, other = 0;
@@ -394,6 +418,7 @@ int main(int argc, char **argv)
         testPlans(root / "plans.novel");
         testPlanModelOverride(root / "override.novel");
         testPlanChat(root / "chat.novel");
+        testPlanTemplates(root / "templates.novel");
         testBriefsAndImport(root / "import.novel");
         testUpgradeFromFormat2(root);
         testErrors(root);

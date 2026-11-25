@@ -83,6 +83,29 @@ void testPrompt()
            messages[1].content.contains("- **Scene 1:"));
 }
 
+void testPlanTemplates()
+{
+    const auto &all = PlanPrompt::templates();
+    EXPECT(all.size() == 2);
+    EXPECT(all[0].id == PlanPrompt::kThreeActTemplate && all[1].id == PlanPrompt::kInnerStagesTemplate);
+    EXPECT(PlanPrompt::templateById("no-such-template").id == PlanPrompt::kThreeActTemplate); // default
+    EXPECT(PlanPrompt::templateById("").id == PlanPrompt::kThreeActTemplate);
+
+    // The default is the three-act prompt, unchanged.
+    EXPECT(PlanPrompt::userPrompt("S.") == PlanPrompt::userPrompt("S.", PlanPrompt::kThreeActTemplate));
+    EXPECT(PlanPrompt::userPrompt("S.").contains("### Act 1:") && PlanPrompt::userPrompt("S.").contains("Story spine"));
+
+    // The inner-stages prompt: stages instead of acts, time markers, no forced climax, synopsis verbatim.
+    const QString synopsis = "  Elin, a retired cartographer, maps her town.\r\n\tShe never leaves it.  ";
+    const QString stages = PlanPrompt::userPrompt(synopsis, PlanPrompt::kInnerStagesTemplate);
+    EXPECT(stages.contains("## Stage progression") && stages.contains("### Stage 1:") && !stages.contains("### Act 1:"));
+    EXPECT(stages.contains("#### Chapter 1:") && stages.contains("- **Scene 1:") && stages.contains("Time:"));
+    EXPECT(stages.contains("many years later") && stages.contains("happy ending"));
+    EXPECT(stages.endsWith(synopsis + "\n\"\"\""));
+    const QList<ChatMessage> m = PlanPrompt::messages(synopsis, PlanPrompt::kInnerStagesTemplate);
+    EXPECT(m.size() == 2 && m[0].content == PlanPrompt::systemPrompt() && m[1].content == stages);
+}
+
 void testPlanChat()
 {
     using PlanChat::Turn;
@@ -123,6 +146,11 @@ void testPlanChat()
     noActs.remove(QRegularExpression("### Act \\d: A\n"));
     EXPECT(PlanChat::incompleteReason(full, noActs).contains("acts"));
     EXPECT(PlanChat::incompleteReason("# Short plan", "# Even shorter").isEmpty()); // tiny plans aren't judged
+    // Stage-style parts count like acts.
+    QString staged = full;
+    staged.replace("### Act ", "### Stage ");
+    EXPECT(PlanChat::incompleteReason(staged, staged).isEmpty());
+    EXPECT(PlanChat::incompleteReason(staged, staged.left(staged.indexOf("### Stage 3"))).contains("2 of the plan's 3 acts"));
     // Headings written with narrow no-break spaces (gpt-oss) still count.
     QString narrow = full;
     narrow.replace("### Act ", QString::fromUtf8("### Act "));
@@ -259,14 +287,23 @@ void livePlan()
         "winter's worst storm Mira sails north alone in her brother's boat. She delivers the letter to the widow "
         "of the Albatross's captain, testifies at the reopened inquiry, and returns to Skarra knowing she will "
         "never be welcome there again, but relighting the lamp one last time before handing over the keys.");
-    QList<ChatMessage> messages = PlanPrompt::messages(synopsis);
+    // NOVELWRITER_LIVE_SYNOPSIS_FILE replaces the sample synopsis; NOVELWRITER_LIVE_TEMPLATE picks the template.
+    QString chosenSynopsis = synopsis;
+    if (const QString file = qEnvironmentVariable("NOVELWRITER_LIVE_SYNOPSIS_FILE"); !file.isEmpty()) {
+        QFile in(file);
+        EXPECT(in.open(QIODevice::ReadOnly));
+        chosenSynopsis = QString::fromUtf8(in.readAll());
+    }
+    const QString templateId = PlanPrompt::templateById(qEnvironmentVariable("NOVELWRITER_LIVE_TEMPLATE")).id;
+    std::printf("Template: %s\n", qPrintable(templateId));
+    QList<ChatMessage> messages = PlanPrompt::messages(chosenSynopsis, templateId);
     double temperature = PlanPrompt::kTemperature;
     const QString refinePath = qEnvironmentVariable("NOVELWRITER_LIVE_REFINE_PLAN");
     if (!refinePath.isEmpty()) {
         QFile file(refinePath);
         EXPECT(file.open(QIODevice::ReadOnly));
         const QString request = qEnvironmentVariable("NOVELWRITER_LIVE_REFINE_REQUEST");
-        messages = PlanChat::messages(synopsis, QString::fromUtf8(file.readAll()), {}, request);
+        messages = PlanChat::messages(chosenSynopsis, QString::fromUtf8(file.readAll()), {}, request);
         temperature = PlanChat::kTemperature;
         std::printf("Refining %s: \"%s\"\n", qPrintable(refinePath), qPrintable(request));
     }
@@ -329,6 +366,7 @@ int main(int argc, char **argv)
     livePlan();
     testStripReasoning();
     testPrompt();
+    testPlanTemplates();
     testPlanChat();
     testStreaming();
     testReasoningIsHidden();

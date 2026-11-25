@@ -234,6 +234,37 @@ void testTypographicCharacters()
     EXPECT(acts[1].chapters[0].scenes[0].brief == "She comes back.");
 }
 
+// The "Inner stages across years" template: stages are the act-level parts and keep their word.
+void testStagePlan()
+{
+    const QString plan = "# Tide Tables\n\n"
+                         "## Stage progression\n"
+                         "1. **Denial**: she insists nothing has changed. Time: her sixties. Ends with: the harbour closes.\n"
+                         "2. **Bargaining**: small deals with herself. Time: her early seventies. Ends with: the last map.\n\n"
+                         "## Structure\n\n"
+                         "### Stage 1: Denial\n"
+                         "Elin keeps redrawing a harbour that is emptying around her.\n\n"
+                         "#### Chapter 1: The Map Room\n"
+                         "Establish her routines.\n"
+                         "- **Scene 1: Fresh Ink**: POV: Elin. Time: early spring, the year she turns 63. "
+                         "Setting: the map room. She adds a jetty that was torn down years ago.\n"
+                         "- **Scene 2: The Survey Boat**: POV: Elin. Time: the next morning. Setting: the quay. "
+                         "A young surveyor asks for her old soundings.\n\n"
+                         "### Stage 2: Bargaining\n\n"
+                         "#### Chapter 2: Detours\n"
+                         "- **Scene 1: The Letter**: POV: Elin. Time: her 71st birthday. Setting: home. "
+                         "She answers her brother's letter with a chart instead of words.\n\n"
+                         "## Open questions\n- Does the surveyor return in Stage 2?\n";
+    const QList<Act> acts = parse(plan);
+    EXPECT(outline(acts) == "Stage 1: Denial[Chapter 1: The Map Room(Fresh Ink,The Survey Boat)] "
+                            "Stage 2: Bargaining[Chapter 2: Detours(The Letter)]");
+    EXPECT(acts[0].brief == "Elin keeps redrawing a harbour that is emptying around her.");
+    EXPECT(acts[0].chapters[0].scenes[0].brief.startsWith("POV: Elin. Time: early spring, the year she turns 63."));
+    // Part and Book work the same way; the word is kept as written.
+    EXPECT(outline(parse("## Part II: Later\n#### Chapter 3: X\n- **Scene 1: Y**: z\n## BOOK 1\n")) ==
+           "Part II: Later[Chapter 3: X(Y)] Book 1[]");
+}
+
 void testNothingToFind()
 {
     EXPECT(parse("").isEmpty());
@@ -314,6 +345,7 @@ int main(int argc, char **argv)
     testChaptersAsListItems();
     testSceneBeforeNextHeading();
     testTypographicCharacters();
+    testStagePlan();
     testNothingToFind();
     printRealPlan();
     checkNovelPlans();

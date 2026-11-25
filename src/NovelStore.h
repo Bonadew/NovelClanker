@@ -39,10 +39,12 @@ class StorageError : public std::runtime_error
 //   scene/<id>/brief      what happens in the scene: POV, setting, goal, conflict, outcome (optional)
 //   novel/synopsis        the synopsis, exactly as written (optional; missing = empty)
 //   novel/plan_model      model to generate plans with, overriding the app setting (optional)
+//   novel/plan_template   plan template to generate plans with (optional; missing = the default template)
 //   novel/plans           plan ids in order
 //   plan/<id>/title       plan title
 //   plan/<id>/text        plan Markdown
 //   plan/<id>/model       id of the model that generated the plan; absent for plans written by hand
+//   plan/<id>/template    id of the plan template it was generated with (optional)
 //   plan/<id>/chat        conversation about the plan (JSON, owned by the UI; optional)
 //
 // Format 2 novels (a single "novel/plan" entry) are upgraded to format 3 when opened.
@@ -97,7 +99,8 @@ class NovelStore
     struct Plan {
         Id id;
         std::string title;
-        std::string model; // model that generated the plan; empty if written by hand (or unknown)
+        std::string model;      // model that generated the plan; empty if written by hand (or unknown)
+        std::string templateId; // plan template it was generated with; empty if none (hand-written, older)
     };
 
     enum class Mode {
@@ -150,14 +153,19 @@ class NovelStore
     // Empty = use the setting.
     std::string planModelOverride() const;
     void setPlanModelOverride(std::string_view model);
+    // Plan template to generate plans with for this novel. Empty = the default template.
+    std::string planTemplate() const;
+    void setPlanTemplate(std::string_view templateId);
 
     // Plans, in the order they were added. Their ids are unique among all ids in the novel.
     const std::vector<Plan> &plans() const
     {
         return m_plans;
     }
-    // Appends a plan. `model` is the generating model's id, or empty for a plan written by hand.
-    Id addPlan(std::string_view title, std::string_view markdown, std::string_view model = {});
+    // Appends a plan. `model` is the generating model's id, or empty for a plan written by hand; `templateId`
+    // the plan template it was generated with, if any.
+    Id addPlan(std::string_view title, std::string_view markdown, std::string_view model = {},
+               std::string_view templateId = {});
     void renamePlan(Id plan, std::string_view title);
     std::string planText(Id plan) const;
     void setPlanText(Id plan, std::string_view markdown);

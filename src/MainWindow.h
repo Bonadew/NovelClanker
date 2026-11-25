@@ -99,6 +99,8 @@ class MainWindow : public QMainWindow
     void refreshPlanModels();      // fetch the server's models for the planner dropdown
     void populatePlanModelCombo(); // "Settings default" + server models, selecting the novel's choice
     void onPlanModelChosen();
+    void showPlanTemplate();     // select the novel's plan template in the dropdown
+    void onPlanTemplateChosen();
     QString effectivePlanModel() const; // the novel's choice, else the planner model from Settings
     QPlainTextEdit *focusedEditor() const;
 
@@ -130,6 +132,8 @@ class MainWindow : public QMainWindow
     QLabel *m_synopsisStatus = nullptr;
     QPushButton *m_generateButton = nullptr;
     QComboBox *m_planModelCombo = nullptr;
+    QComboBox *m_planTemplateCombo = nullptr;
+    QLabel *m_planTemplateHint = nullptr;
     QPushButton *m_refreshModelsButton = nullptr;
     LmStudioClient *m_modelClient = nullptr;
     QList<LmModel> m_serverModels;

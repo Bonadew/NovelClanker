@@ -20,6 +20,7 @@ constexpr std::string_view kActsKey = "novel/acts";
 constexpr std::string_view kSynopsisKey = "novel/synopsis";
 constexpr std::string_view kPlansKey = "novel/plans";
 constexpr std::string_view kPlanModelKey = "novel/plan_model";
+constexpr std::string_view kPlanTemplateKey = "novel/plan_template";
 constexpr std::string_view kLegacyPlanKey = "novel/plan"; // format 2: a single plan
 
 rocksdb::Slice slice(std::string_view s)
@@ -179,7 +180,8 @@ NovelStore::NovelStore(const std::filesystem::path &dir, Mode mode) : m_path(dir
     }
     for (Id planId : decodeIds(get(kPlansKey))) {
         m_plans.push_back({planId, get(key("plan", planId, "title")),
-                           getOptional(*m_db, key("plan", planId, "model"), "Cannot read plan")});
+                           getOptional(*m_db, key("plan", planId, "model"), "Cannot read plan"),
+                           getOptional(*m_db, key("plan", planId, "template"), "Cannot read plan")});
     }
 }
 
@@ -455,6 +457,18 @@ void NovelStore::setPlanModelOverride(std::string_view model)
     check(status, "Cannot save the plan model");
 }
 
+std::string NovelStore::planTemplate() const
+{
+    return getOptional(*m_db, kPlanTemplateKey, "Cannot read the plan template");
+}
+
+void NovelStore::setPlanTemplate(std::string_view templateId)
+{
+    const auto status = templateId.empty() ? m_db->Delete(durableWrites(), slice(kPlanTemplateKey))
+                                           : m_db->Put(durableWrites(), slice(kPlanTemplateKey), slice(templateId));
+    check(status, "Cannot save the plan template");
+}
+
 std::size_t NovelStore::requirePlan(Id plan) const
 {
     for (std::size_t i = 0; i < m_plans.size(); ++i) {
@@ -465,17 +479,21 @@ std::size_t NovelStore::requirePlan(Id plan) const
     throw std::invalid_argument("NovelStore: unknown plan id: " + std::to_string(plan));
 }
 
-NovelStore::Id NovelStore::addPlan(std::string_view title, std::string_view markdown, std::string_view model)
+NovelStore::Id NovelStore::addPlan(std::string_view title, std::string_view markdown, std::string_view model,
+                                   std::string_view templateId)
 {
     const Id id = m_nextId;
     std::vector<Plan> plans = m_plans;
-    plans.push_back({id, std::string(title), std::string(model)});
+    plans.push_back({id, std::string(title), std::string(model), std::string(templateId)});
 
     rocksdb::WriteBatch batch;
     batch.Put(key("plan", id, "title"), slice(title));
     batch.Put(key("plan", id, "text"), slice(markdown));
     if (!model.empty()) {
         batch.Put(key("plan", id, "model"), slice(model));
+    }
+    if (!templateId.empty()) {
+        batch.Put(key("plan", id, "template"), slice(templateId));
     }
     batch.Put(slice(kPlansKey), encodeIds(plans));
     batch.Put(slice(kNextIdKey), std::to_string(id + 1));
@@ -532,6 +550,7 @@ void NovelStore::removePlan(Id plan)
     batch.Delete(key("plan", plan, "text"));
     batch.Delete(key("plan", plan, "model"));
     batch.Delete(key("plan", plan, "chat"));
+    batch.Delete(key("plan", plan, "template"));
     batch.Put(slice(kPlansKey), encodeIds(plans));
     check(m_db->Write(durableWrites(), &batch), "Cannot delete plan");
     m_plans = std::move(plans);

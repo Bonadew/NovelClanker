@@ -2,15 +2,10 @@
 
 namespace PlanPrompt {
 
-QString systemPrompt()
-{
-    return QStringLiteral(
-        R"(You are an experienced developmental editor and story architect. You turn a novel synopsis into a clear, practical writing plan that an author (or a writing assistant) can follow scene by scene. You plan the novel; you do not write its prose. You follow the requested output format exactly.)");
-}
+namespace {
 
-QString userPrompt(const QString &synopsis)
-{
-    static const QString instructions = QStringLiteral(R"(Create a plan for the novel described by the synopsis at the end of this message.
+// The classic plot-driven model: three acts of about 25/50/25% with named turning points.
+const QString kThreeActInstructions = QStringLiteral(R"PROMPT(Create a plan for the novel described by the synopsis at the end of this message.
 
 Requirements:
 - Stay faithful to the synopsis: keep its characters, events, tone and ending. Where it is vague, make choices that fit its genre and tone, and list every important invention under "Open questions" so the author can confirm or change it.
@@ -70,13 +65,116 @@ Output only the plan, as Markdown, with exactly this structure:
 Number chapters continuously through the whole novel, and number scenes from 1 within each chapter.
 
 Synopsis:
-""")");
+""")PROMPT");
+
+// A character-driven model for stories told across many years: the novel follows the protagonist through
+// successive inner stages (as in the stages of grief) instead of a plot with turning points. Time passes
+// through concrete markers in the scenes, never through "years later" summaries, and the ending may be bleak.
+const QString kInnerStagesInstructions = QStringLiteral(R"PROMPT(Create a plan for the novel described by the synopsis at the end of this message.
+
+This novel is character-driven and told across many years. Plan it as the protagonist's progression through a sequence of inner stages, like the stages of grief, not as a three-act plot with turning points.
+
+Requirements:
+- Stay faithful to the synopsis: keep its characters, events, tone and ending, even when the ending is bleak or unresolved. Do not add a rescue, a twist, a climax or a happy ending the synopsis does not have. Where it is vague, make choices that fit its tone, and list every important invention under "Open questions" so the author can confirm or change it.
+- Work out the progression before the details: first write the "Stage progression", the 5 to 8 inner stages the protagonist passes through, in order. Name each stage with one word for the inner state (as in the stages of grief: Denial, Anger, Bargaining, Depression, Acceptance), and give its meaning, the protagonist's age or the years it covers, and what is different in them when the stage ends. Each stage must grow out of the one before it.
+- Each stage becomes one part of the Structure (### Stage N: <name>). Divide each stage into chapters and each chapter into scenes. Give stages room according to their weight; they need not be equal.
+- Scenes can be quiet and introspective, but every scene must change something: the protagonist's inner state, a relationship, their circumstances, or what they believe about themselves.
+- The story spans years, so show time passing inside the scenes through concrete markers: seasons and weather, birthdays and holidays, signs of ageing, changes in technology and culture, changes in the protagonist's home and surroundings, and people arriving or leaving. Never move time with summaries such as "many years later". Give every scene a time marker.
+- Use flashbacks or memories only where they reveal the past or make the passage of time felt.
+- Let secondary characters and subplots (friends, neighbours, family, work) mirror or contrast the protagonist's progression, and let them change over the years too.
+- Choose the number of chapters from the amount of story (typically 15 to 30 chapters with 1 to 4 scenes each), but never pad. Every chapter must contain something new; when the progression is complete, end the plan.
+- Write the plan in the same language as the synopsis.
+- Keep each scene to one or two sentences so the whole plan fits in one answer.
+
+Output only the plan, as Markdown, with exactly this structure:
+
+# <Working title>
+
+## Premise
+<One or two sentences: protagonist, what they long for, what keeps them from it, and what is at stake as the years pass.>
+
+## Genre, tone and point of view
+<Genre, target audience, tone, and narrative point of view and tense.>
+
+## Themes
+- <A question the book explores?>
+
+## Characters
+- **<Name>**: <role>. Longs for: <inner desire>. Holds them back: <obstacle within or around them>. Over the years: <how they change, or fail to>.
+
+## Settings
+- **<Place>**: <short description and how it changes over the years>.
+
+## Stage progression
+1. **<Stage name>**: <the inner state>. Time: <age or years>. Ends with: <what is different afterwards>.
+2. **<Stage name>**: ...
+
+## Structure
+
+### Stage 1: <Stage name>
+<One paragraph: the protagonist's inner state in this stage, how it begins, and how it gives way to the next.>
+
+#### Chapter 1: <chapter title>
+<One sentence: the purpose of the chapter.>
+- **Scene 1: <scene title>**: POV: <character>. Time: <time marker, e.g. early spring, the year she turns 60>. Setting: <place>. <What happens and what changes.>
+- **Scene 2: <scene title>**: ...
+
+#### Chapter 2: <chapter title>
+...
+
+### Stage 2: <Stage name>
+...
+
+## Open questions
+- <A decision the author should confirm or make.>
+
+Number chapters continuously through the whole novel, and number scenes from 1 within each chapter.
+
+Synopsis:
+""")PROMPT");
+
+} // namespace
+
+const QList<Template> &templates()
+{
+    static const QList<Template> all{
+        {kThreeActTemplate, QStringLiteral("Three acts (25/50/25)"),
+         QStringLiteral("A plot-driven novel in three acts with the classic turning points: inciting incident, first plot "
+                        "point, midpoint, crisis, climax and resolution.")},
+        {kInnerStagesTemplate, QStringLiteral("Inner stages across years"),
+         QStringLiteral("A character-driven novel spanning many years, planned as the protagonist's progression through "
+                        "inner stages (like the stages of grief). Time passes through concrete markers in the scenes; the "
+                        "ending may be bleak or unresolved.")},
+    };
+    return all;
+}
+
+const Template &templateById(const QString &id)
+{
+    for (const Template &t : templates()) {
+        if (t.id == id) {
+            return t;
+        }
+    }
+    return templates().front();
+}
+
+QString systemPrompt()
+{
+    return QStringLiteral(
+        R"(You are an experienced developmental editor and story architect. You turn a novel synopsis into a clear, practical writing plan that an author (or a writing assistant) can follow scene by scene. You plan the novel; you do not write its prose. You follow the requested output format exactly.)");
+}
+
+QString userPrompt(const QString &synopsis, const QString &templateId)
+{
+    const QString &instructions =
+        templateById(templateId).id == kInnerStagesTemplate ? kInnerStagesInstructions : kThreeActInstructions;
     return instructions + "\n" + synopsis + "\n\"\"\"";
 }
 
-QList<ChatMessage> messages(const QString &synopsis)
+QList<ChatMessage> messages(const QString &synopsis, const QString &templateId)
 {
-    return {{QStringLiteral("system"), systemPrompt()}, {QStringLiteral("user"), userPrompt(synopsis)}};
+    return {{QStringLiteral("system"), systemPrompt()}, {QStringLiteral("user"), userPrompt(synopsis, templateId)}};
 }
 
 } // namespace PlanPrompt

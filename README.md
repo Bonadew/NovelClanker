@@ -41,6 +41,15 @@ Runs on Windows, Linux, and macOS.
   model's revised plan replaces the plan as one edit, so Ctrl+Z in the plan undoes it; questions just get an
   answer. The model always sees the synopsis and the *current* plan, including your own edits. Each plan keeps
   its own conversation (**Clear** forgets it). Enter sends, Shift+Enter starts a new line.
+- The **Plan template** dropdown (Synopsis tab) chooses the structural model plans are generated in; a short
+  description of the selected template is shown under it, and the choice is saved with the novel:
+  - **Three acts (25/50/25)**: a plot-driven novel in three acts with the classic turning points (inciting
+    incident, first plot point, midpoint, crisis, climax, resolution).
+  - **Inner stages across years**: a character-driven novel spanning many years, planned as the protagonist's
+    progression through 5-8 inner stages, in the manner of the stages of grief.
+    Parts are `### Stage N: <name>`, every scene carries a time marker (season, birthday, signs of ageing,
+    changing technology or surroundings) instead of "years later" summaries, and a bleak or unresolved ending
+    is kept as the synopsis has it.
 - Next to **Generate Plan**, the **Planner model** dropdown chooses the model for this novel's plans. It lists
   the LM Studio server's models (**Refresh** fetches them again); "Settings default" uses the planner model
   from Edit → Settings, and any other choice overrides it. The choice is saved with the novel.
@@ -52,7 +61,7 @@ Runs on Windows, Linux, and macOS.
 
 ### The plan prompt
 
-The prompt is in `src/PlanPrompt.cpp`. It asks the model to act as a developmental editor and produce a plan
+The prompts are in `src/PlanPrompt.cpp`, one per template; the three-act one is described here. It asks the model to act as a developmental editor and produce a plan
 that stays faithful to the synopsis. The model first lays out a *story spine* (the synopsis's key events and
 turning points in order, each assigned to an act) and then builds three acts from it (roughly 25/50/25% of the
 chapters), giving every scene a POV character, goal, conflict and outcome. It lists its own inventions as open
@@ -92,10 +101,12 @@ children, so restructuring never rewrites scene text. Ids are unique across all 
 | `scene/<id>/brief`    | what happens in the scene (optional)    |
 | `novel/synopsis`      | synopsis, exactly as written (optional) |
 | `novel/plan_model`    | planner model override (optional)       |
+| `novel/plan_template` | plan template (optional; default three acts) |
 | `novel/plans`         | plan ids in order                       |
 | `plan/<id>/title`     | plan title                              |
 | `plan/<id>/text`      | plan Markdown                           |
 | `plan/<id>/model`     | generating model; absent if by hand     |
+| `plan/<id>/template`  | template it was generated with (optional) |
 | `plan/<id>/chat`      | conversation about the plan (JSON)      |
 
 Novels from earlier versions (format 2, with a single `novel/plan`) are upgraded when opened: that plan
@@ -161,6 +172,8 @@ LM Studio (`NOVELWRITER_LIVE_LMSTUDIO=http://127.0.0.1:1234`):
 - `chat_test` with `NOVELWRITER_LIVE_PLANNER_MODEL=<model id>` also generates a plan from a sample synopsis
   (written to `NOVELWRITER_LIVE_PLAN_OUT` if set). With `NOVELWRITER_LIVE_REFINE_PLAN=<plan file>` and
   `NOVELWRITER_LIVE_REFINE_REQUEST="..."` it refines that plan through the plan chat instead.
+  `NOVELWRITER_LIVE_TEMPLATE=<template id>` (`three-act`, `inner-stages`) and
+  `NOVELWRITER_LIVE_SYNOPSIS_FILE=<file>` choose the template and replace the sample synopsis.
 
 To see how plans are read into acts/chapters/scenes, run `planstructure_test` with
 `NOVELWRITER_PARSE_PLAN=<plan file>`, or with `NOVELWRITER_PARSE_NOVEL=<novel folder>` to check every plan in

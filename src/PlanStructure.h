@@ -6,7 +6,8 @@
 // Reads the manuscript structure (acts -> chapters -> scenes) out of a plan.
 //
 // Expects the plan prompt's Markdown shape but tolerates common variations:
-//   ### Act 1: Setup                      (any heading level; ":", "-", "–" or "—" separators; roman numerals)
+//   ### Act 1: Setup                      (also Stage, Part or Book; any heading level; ":", "-", "–" or "—"
+//                                         separators; roman numerals)
 //   <paragraph>                           -> the act's brief
 //   #### Chapter 3: The Storm             ("Chapter 11.5", no title, ...)
 //   <paragraph>                           -> the chapter's brief

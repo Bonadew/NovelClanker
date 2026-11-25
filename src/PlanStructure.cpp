@@ -59,6 +59,7 @@ enum class Kind { None, Act, Chapter, Scene };
 // A line that starts an act, chapter or scene.
 struct Marker {
     Kind kind = Kind::None;
+    QString word;   // act-level parts keep their own word: "Act", "Stage", "Part", "Book"
     QString number; // as written: "2", "IV", "11.5", "1.2"
     QString title;  // may be empty
     QString brief;  // text on the same line after the title; may be empty
@@ -69,7 +70,7 @@ struct Marker {
 const Re &markerStart()
 {
     static const Re re(
-        QStringLiteral(R"(^\s*(\*\*)?\s*(Act|Chapter|Scene)\s+([0-9IVXLCivxlc]+(?:\.[0-9]+)*)\b(.*)$)"), kCi);
+        QStringLiteral(R"(^\s*(\*\*)?\s*(Act|Part|Stage|Book|Chapter|Scene)\s+([0-9IVXLCivxlc]+(?:\.[0-9]+)*)\b(.*)$)"), kCi);
     return re;
 }
 
@@ -119,7 +120,8 @@ Marker marker(const QString &line)
     }
     Marker result;
     const QString word = m.captured(2).toLower();
-    result.kind = word == "act" ? Kind::Act : word == "chapter" ? Kind::Chapter : Kind::Scene;
+    result.kind = word == "chapter" ? Kind::Chapter : word == "scene" ? Kind::Scene : Kind::Act;
+    result.word = word.left(1).toUpper() + word.mid(1);
     result.number = m.captured(3);
     QString rest = m.captured(4);
 
@@ -248,8 +250,8 @@ QList<Act> parse(const QString &plan)
         const Marker m = marker(line);
         switch (m.kind) {
         case Kind::Act:
-            acts.append({m.title.isEmpty() ? QStringLiteral("Act %1").arg(m.number)
-                                           : QStringLiteral("Act %1: %2").arg(m.number, m.title),
+            acts.append({m.title.isEmpty() ? QStringLiteral("%1 %2").arg(m.word, m.number)
+                                           : QStringLiteral("%1 %2: %3").arg(m.word, m.number, m.title),
                          m.brief, {}});
             target = Target::Act;
             continue;

@@ -73,7 +73,7 @@ QString systemPrompt(const QString &synopsis, const QString &plan)
 How to answer:
 - When the author asks for changes to the plan, first write one or two sentences saying what you changed. Then output the complete revised plan between a line containing only <plan> and a line containing only </plan>.
 - The revised plan must be the whole plan from its title to its last section, not only the changed parts. Copy every part the author did not ask to change word for word: the title, premise, characters, settings, story spine, every act, chapter and scene, and the open questions. Never shorten, summarise or skip anything, and never write "..." or "(unchanged)" in place of content.
-- Keep the plan's Markdown structure and headings (### Act N: ..., #### Chapter N: ..., - **Scene N: ...**) and keep chapter numbering continuous.
+- Keep the plan's Markdown structure and headings exactly as they are written (for example ### Act N: ... or ### Stage N: ..., #### Chapter N: ..., - **Scene N: ...**) and keep chapter numbering continuous.
 - When the author asks a question or wants to discuss the plan, answer briefly and do not output a <plan> block.
 - Stay consistent with the synopsis unless the author asks to depart from it.
 - Write in the same language as the plan.)PROMPT");
@@ -105,7 +105,7 @@ QString incompleteReason(const QString &current, const QString &revised)
     // Unicode properties: "\s" must also match the no-break/narrow spaces some models write ("Chapter 10").
     constexpr auto options = QRegularExpression::MultilineOption | QRegularExpression::CaseInsensitiveOption |
                              QRegularExpression::UseUnicodePropertiesOption;
-    static const QRegularExpression act(QStringLiteral(R"(^###\s+Act\b)"), options);
+    static const QRegularExpression act(QStringLiteral(R"(^###\s+(?:Act|Part|Stage|Book)\b)"), options);
     static const QRegularExpression chapter(QStringLiteral(R"(^####\s+Chapter\b)"), options);
     const auto count = [](const QRegularExpression &re, const QString &text) {
         int n = 0;

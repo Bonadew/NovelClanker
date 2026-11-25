@@ -798,6 +798,21 @@ QWidget *MainWindow::buildSynopsisView()
     m_refreshModelsButton->setToolTip(tr("Fetch the models from the LM Studio server again"));
     m_modelClient = new LmStudioClient(this);
 
+    m_planTemplateCombo = new QComboBox(view);
+    m_planTemplateCombo->setObjectName("planTemplateCombo");
+    for (const PlanPrompt::Template &t : PlanPrompt::templates()) {
+        m_planTemplateCombo->addItem(t.name, t.id);
+        m_planTemplateCombo->setItemData(m_planTemplateCombo->count() - 1, t.description, Qt::ToolTipRole);
+    }
+    m_planTemplateHint = new QLabel(view);
+    m_planTemplateHint->setObjectName("planTemplateHint");
+    m_planTemplateHint->setWordWrap(true);
+    m_planTemplateHint->setEnabled(false); // greyed-out helper text
+
+    auto *templateRow = new QHBoxLayout;
+    templateRow->addWidget(new QLabel(tr("Plan template:"), view));
+    templateRow->addWidget(m_planTemplateCombo, 1);
+
     auto *modelRow = new QHBoxLayout;
     modelRow->addWidget(new QLabel(tr("Planner model:"), view));
     modelRow->addWidget(m_planModelCombo, 1);
@@ -806,6 +821,8 @@ QWidget *MainWindow::buildSynopsisView()
     modelRow->addWidget(m_generateButton);
 
     auto *bottom = new QVBoxLayout;
+    bottom->addLayout(templateRow);
+    bottom->addWidget(m_planTemplateHint);
     bottom->addLayout(modelRow);
     bottom->addWidget(m_synopsisStatus);
 
@@ -825,6 +842,7 @@ QWidget *MainWindow::buildSynopsisView()
     connect(m_generateButton, &QPushButton::clicked, this, &MainWindow::generatePlan);
     connect(m_refreshModelsButton, &QPushButton::clicked, this, &MainWindow::refreshPlanModels);
     connect(m_planModelCombo, &QComboBox::currentIndexChanged, this, &MainWindow::onPlanModelChosen);
+    connect(m_planTemplateCombo, &QComboBox::currentIndexChanged, this, &MainWindow::onPlanTemplateChosen);
     connect(m_modelClient, &LmStudioClient::modelsFetched, this, [this](const QList<LmModel> &models) {
         m_serverModels = models;
         m_modelsFetched = true;
@@ -965,10 +983,36 @@ void MainWindow::loadSynopsisAndPlan()
     }
     refreshPlanList(first);
     m_tabs->setTabVisible(m_tabs->indexOf(m_planView), m_store != nullptr);
+    showPlanTemplate();
     populatePlanModelCombo();
     if (m_store) {
         refreshPlanModels();
     }
+}
+
+void MainWindow::showPlanTemplate()
+{
+    QString chosen;
+    if (m_store) {
+        attempt(tr("Could not read the plan template."),
+                [&] { chosen = QString::fromStdString(m_store->planTemplate()); });
+    }
+    const PlanPrompt::Template &t = PlanPrompt::templateById(chosen); // unknown or empty: the default
+    m_loading = true;
+    m_planTemplateCombo->setCurrentIndex(m_planTemplateCombo->findData(t.id));
+    m_planTemplateCombo->setEnabled(m_store != nullptr);
+    m_loading = false;
+    m_planTemplateHint->setText(t.description);
+}
+
+void MainWindow::onPlanTemplateChosen()
+{
+    const PlanPrompt::Template &t = PlanPrompt::templateById(m_planTemplateCombo->currentData().toString());
+    m_planTemplateHint->setText(t.description);
+    if (m_loading || !m_store) {
+        return;
+    }
+    attempt(tr("Could not save the plan template."), [&] { m_store->setPlanTemplate(t.id.toStdString()); });
 }
 
 bool MainWindow::saveSynopsis()
@@ -1066,8 +1110,15 @@ void MainWindow::showPlan(QTreeWidgetItem *item)
         const auto &plans = m_store->plans();
         const auto it = std::find_if(plans.begin(), plans.end(), [&](const auto &p) { return p.id == *plan; });
         if (it != plans.end()) {
-            origin = it->model.empty() ? tr("Written by hand.")
-                                       : tr("Generated with %1.").arg(QString::fromStdString(it->model));
+            if (it->model.empty()) {
+                origin = tr("Written by hand.");
+            } else if (it->templateId.empty()) {
+                origin = tr("Generated with %1.").arg(QString::fromStdString(it->model));
+            } else {
+                origin = tr("Generated with %1 using the \"%2\" template.")
+                             .arg(QString::fromStdString(it->model),
+                                  PlanPrompt::templateById(QString::fromStdString(it->templateId)).name);
+            }
         }
     }
     m_planOrigin->setText(origin);
@@ -1188,18 +1239,20 @@ void MainWindow::generatePlan()
         return;
     }
 
-    // Every generation makes a new plan that remembers the model; existing plans are never replaced.
+    // Every generation makes a new plan that remembers the model and template; existing plans are never replaced.
     m_planModel = model;
+    const QString templateId = PlanPrompt::templateById(m_planTemplateCombo->currentData().toString()).id;
     Id id = 0;
     if (!attempt(tr("Could not add a plan."), [&] {
-            id = m_store->addPlan(nextPlanTitle().toStdString(), "", m_planModel.toStdString());
+            id = m_store->addPlan(nextPlanTitle().toStdString(), "", m_planModel.toStdString(),
+                                  templateId.toStdString());
         })) {
         return;
     }
     m_planBeforeGeneration = m_currentPlan;
     m_generatingPlan = id;
-    m_planRequest = new ChatCompletion(server, m_planModel, PlanPrompt::messages(synopsis), PlanPrompt::kTemperature,
-                                       this);
+    m_planRequest = new ChatCompletion(server, m_planModel, PlanPrompt::messages(synopsis, templateId),
+                                       PlanPrompt::kTemperature, this);
     connect(m_planRequest, &ChatCompletion::textChanged, this, [this](const QString &text) {
         m_pendingPlanText = text;
         if (!m_planRefresh->isActive()) {

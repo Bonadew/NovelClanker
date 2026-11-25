@@ -143,7 +143,7 @@ void testMultiplePlans(const fs::path &dir)
         EXPECT(waitFor([&] { return u.planStatus->text().startsWith("Done"); }));
         EXPECT(u.tabs->currentIndex() == u.planTab);
         EXPECT(u.planRows() == "Plan 1|planner-x");
-        EXPECT(u.planOrigin->text() == "Generated with planner-x.");
+        EXPECT(u.planOrigin->text() == "Generated with planner-x using the \"Three acts (25/50/25)\" template.");
         EXPECT(u.plan->toPlainText() == kPlan);
         EXPECT(!u.plan->isReadOnly() && u.stop->isHidden() && u.generate->isEnabled());
 
@@ -161,7 +161,7 @@ void testMultiplePlans(const fs::path &dir)
         EXPECT(waitFor([&] { return u.planStatus->text().startsWith("Done"); }));
         EXPECT(u.planRows() == "Plan 1|planner-x Plan 2|planner-y");
         EXPECT(u.planList->currentItem() == u.planList->topLevelItem(1));
-        EXPECT(u.planOrigin->text() == "Generated with planner-y.");
+        EXPECT(u.planOrigin->text() == "Generated with planner-y using the \"Three acts (25/50/25)\" template.");
 
         // A plan written by hand.
         u.newPlan->click();
@@ -173,7 +173,7 @@ void testMultiplePlans(const fs::path &dir)
         u.planList->topLevelItem(2)->setText(0, "  Mine  ");
         EXPECT(u.planList->topLevelItem(2)->text(0) == "Mine");
         u.planList->setCurrentItem(u.planList->topLevelItem(0));
-        EXPECT(u.planOrigin->text() == "Generated with planner-x.");
+        EXPECT(u.planOrigin->text() == "Generated with planner-x using the \"Three acts (25/50/25)\" template.");
         EXPECT(u.plan->toPlainText() == kPlan + "\n#### Chapter 1: The letter");
         w.close();
     }
@@ -483,6 +483,61 @@ void testCreateStructureFromPlan(const fs::path &dir)
     EXPECT(store.plans().size() == 1); // the plan itself is unchanged
 }
 
+void testPlanTemplateChoice(const fs::path &dir)
+{
+    FakeServer server;
+    server.routes["/v1/chat/completions"] = {
+        200,
+        sseStream({"# Tide Tables\n\n## Stage progression\n1. **Denial**: nothing has changed.\n\n## Structure\n\n",
+                   "### Stage 1: Denial\n#### Chapter 1: The Map Room\n",
+                   "- **Scene 1: Ink**: POV: Elin. Time: early spring. She redraws the harbour.\n",
+                   "### Stage 2: Bargaining\n#### Chapter 2: Detours\n",
+                   "- **Scene 1: Letter**: POV: Elin. Time: her 71st birthday. She refuses a visit.\n"}),
+        "text/event-stream"};
+    useServer(server, "planner-x");
+    {
+        MainWindow w;
+        EXPECT(w.openNovel(toQ(dir), NovelStore::Mode::Create));
+        const Ui u = ui(w);
+        auto *combo = w.findChild<QComboBox *>("planTemplateCombo");
+        auto *hint = w.findChild<QLabel *>("planTemplateHint");
+        EXPECT(combo && hint && combo->count() == 2);
+        EXPECT(combo->currentData().toString() == "three-act" && hint->text().contains("three acts"));
+
+        combo->setCurrentIndex(combo->findData("inner-stages"));
+        EXPECT(hint->text().contains("inner stages"));
+        u.synopsis->setPlainText("Elin, a retired cartographer, slowly stops leaving her harbour town.");
+        u.generate->click();
+        EXPECT(waitFor([&] { return u.planStatus->text().startsWith("Done"); }));
+
+        const QString prompt = QJsonDocument::fromJson(server.lastRequestBody)
+                                   .object()
+                                   .value("messages")
+                                   .toArray()
+                                   .at(1)
+                                   .toObject()
+                                   .value("content")
+                                   .toString();
+        EXPECT(prompt.contains("## Stage progression") && !prompt.contains("### Act 1:"));
+        EXPECT(u.planOrigin->text() == "Generated with planner-x using the \"Inner stages across years\" template.");
+
+        // The stage plan becomes the manuscript's structure.
+        w.findChild<QPushButton *>("createStructureButton")->click();
+        EXPECT(treeOutline(w.findChild<QTreeWidget *>("manuscriptTree")) ==
+               "Stage 1: Denial[Chapter 1: The Map Room(Ink)] Stage 2: Bargaining[Chapter 2: Detours(Letter)]");
+        w.close();
+    }
+    {
+        NovelStore store(dir, NovelStore::Mode::Open);
+        EXPECT(store.planTemplate() == "inner-stages");
+        EXPECT(store.plans().size() == 1 && store.plans()[0].templateId == "inner-stages" &&
+               store.plans()[0].model == "planner-x");
+    }
+    MainWindow w; // the novel's template choice is restored
+    EXPECT(w.openNovel(toQ(dir), NovelStore::Mode::Open));
+    EXPECT(w.findChild<QComboBox *>("planTemplateCombo")->currentData().toString() == "inner-stages");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -507,6 +562,7 @@ int main(int argc, char **argv)
     testChatRefinesPlan(root / "chat.novel");
     testChatHistoryIsRestored(root / "chat.novel");
     testCreateStructureFromPlan(root / "structure.novel");
+    testPlanTemplateChoice(root / "template.novel");
 
     QSettings().clear();
     if (g_failures == 0) {
