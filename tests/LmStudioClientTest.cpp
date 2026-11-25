@@ -59,6 +59,7 @@ QStringList ids(const QList<LmModel> &models)
     return out;
 }
 
+// @relation(AI-1, FR-SET-2, scope=function)
 void testNativeV1()
 {
     FakeServer server;
@@ -76,6 +77,7 @@ void testNativeV1()
     EXPECT((server.requested == QStringList{"/api/v1/models"}));
 }
 
+// @relation(AI-1, scope=function)
 void testFallbackToNativeV0()
 {
     FakeServer server;
@@ -90,6 +92,7 @@ void testFallbackToNativeV0()
     EXPECT((server.requested == QStringList{"/api/v1/models", "/api/v0/models"}));
 }
 
+// @relation(AI-1, scope=function)
 void testFallbackToOpenAi()
 {
     FakeServer server;
@@ -99,6 +102,7 @@ void testFallbackToOpenAi()
     EXPECT((server.requested == QStringList{"/api/v1/models", "/api/v0/models", "/v1/models"}));
 }
 
+// @relation(FR-SET-1, scope=function)
 void testServerPathPrefix()
 {
     // A server behind a reverse proxy at a sub-path.
@@ -108,6 +112,7 @@ void testServerPathPrefix()
     EXPECT(r.models && r.models->isEmpty());
 }
 
+// @relation(AI-1, AI-2, scope=function)
 void testErrors()
 {
     {
@@ -145,6 +150,7 @@ void testErrors()
     }
 }
 
+// @relation(FR-SET-1, scope=function)
 void testNormalizeServerUrl()
 {
     const auto norm = [](const char *in) { return normalizeServerUrl(QString::fromUtf8(in)).toString(); };

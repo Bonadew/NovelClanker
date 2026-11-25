@@ -60,6 +60,7 @@ Outcome run(const QUrl &server, int timeoutMs = 10000)
     return out;
 }
 
+// @relation(AI-5, FR-GEN-3, scope=function)
 void testStripReasoning()
 {
     EXPECT(stripReasoning("Hello") == "Hello");
@@ -71,6 +72,7 @@ void testStripReasoning()
     EXPECT(stripReasoning("  \n# Plan  ") == "# Plan  ");
 }
 
+// @relation(AI-6, FR-TPL-2, scope=function)
 void testPrompt()
 {
     const QString synopsis = "  Line one\r\n\tLine two \xC2\xA0 with \"quotes\"  ";
@@ -83,6 +85,7 @@ void testPrompt()
            messages[1].content.contains("- **Scene 1:"));
 }
 
+// @relation(FR-TPL-2, FR-TPL-3, FR-TPL-5, AI-6, scope=function)
 void testPlanTemplates()
 {
     const auto &all = PlanPrompt::templates();
@@ -106,6 +109,7 @@ void testPlanTemplates()
     EXPECT(m.size() == 2 && m[0].content == PlanPrompt::systemPrompt() && m[1].content == stages);
 }
 
+// @relation(AI-7, AI-8, FR-CHT-2, FR-CHT-3, FR-CHT-4, scope=function)
 void testPlanChat()
 {
     using PlanChat::Turn;
@@ -177,6 +181,7 @@ void testPlanChat()
     EXPECT(PlanChat::streamingMessage("Done.\n<plan>\n# P\n</plan>\nMore?", &words) == "Done.\n\nMore?");
 }
 
+// @relation(AI-3, scope=function)
 void testStreaming()
 {
     FakeServer server;
@@ -196,6 +201,7 @@ void testStreaming()
     EXPECT(request.value("messages").toArray().at(1).toObject().value("content").toString().contains("A synopsis."));
 }
 
+// @relation(AI-5, scope=function)
 void testReasoningIsHidden()
 {
     FakeServer server;
@@ -211,6 +217,7 @@ void testReasoningIsHidden()
     }
 }
 
+// @relation(AI-9, scope=function)
 void testTruncated()
 {
     FakeServer server;
@@ -220,6 +227,7 @@ void testTruncated()
     EXPECT(out.truncated);
 }
 
+// @relation(AI-9, scope=function)
 void testErrors()
 {
     {
@@ -245,6 +253,7 @@ void testErrors()
     }
 }
 
+// @relation(NFR-3, scope=function)
 void testAbort()
 {
     FakeServer server;
@@ -269,6 +278,7 @@ void testAbort()
 // Optional: generate a real plan. Set NOVELWRITER_LIVE_LMSTUDIO (server) and NOVELWRITER_LIVE_PLANNER_MODEL;
 // the plan is written to NOVELWRITER_LIVE_PLAN_OUT (or printed). With NOVELWRITER_LIVE_REFINE_PLAN set to a plan
 // file, the plan is instead refined through the plan chat with NOVELWRITER_LIVE_REFINE_REQUEST.
+// @relation(NFR-12, scope=function)
 void livePlan()
 {
     const QString server = qEnvironmentVariable("NOVELWRITER_LIVE_LMSTUDIO");

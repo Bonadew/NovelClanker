@@ -86,6 +86,7 @@ The purpose is to bring Mira home.
 - Scene 1: should this be a question? It must not be parsed.
 )";
 
+// @relation(FR-IMP-1, FR-IMP-3, FR-TPL-4, scope=function)
 void testPromptFormat()
 {
     const QList<Act> acts = parse(kPlan);
@@ -103,6 +104,7 @@ void testPromptFormat()
     EXPECT(c.acts == 3 && c.chapters == 4 && c.scenes == 5);
 }
 
+// @relation(FR-IMP-2, scope=function)
 void testVariations()
 {
     // No bold, dashes, roman numerals, a title-less chapter, an extra non-structure heading, CRLF.
@@ -127,6 +129,7 @@ void testVariations()
     EXPECT(acts[0].chapters[1].brief.isEmpty());
 }
 
+// @relation(FR-IMP-2, scope=function)
 void testImplicitParents()
 {
     // Chapters with no act, scenes with no chapter, scene headings with paragraph briefs, bold-line headings.
@@ -150,6 +153,7 @@ void testImplicitParents()
 
 // Regression: chapters written as list items (as mn-12b-mag-mell-r1 does) were not recognised, so each one was
 // appended to the brief of the scene before it, and the first one in an act to the act's brief.
+// @relation(FR-IMP-2, scope=function)
 void testChaptersAsListItems()
 {
     const QString plan = "# Harbour Lights\n\n"
@@ -192,6 +196,7 @@ void testChaptersAsListItems()
 }
 
 // A last scene directly followed by the next chapter or act, without a blank line, in each notation.
+// @relation(FR-IMP-2, scope=function)
 void testSceneBeforeNextHeading()
 {
     for (const QString &next : {QString("#### Chapter 2: Next"), QString("**Chapter 2: Next**"),
@@ -211,6 +216,7 @@ void testSceneBeforeNextHeading()
 
 // Regression: gpt-oss writes narrow no-break spaces (U+202F) as in "Chapter 10" and "Scene 1". Those
 // chapters were dropped (half the plan) and scene lines became briefs.
+// @relation(FR-IMP-2, scope=function)
 void testTypographicCharacters()
 {
     const QString plan = QString::fromUtf8("\xEF\xBB\xBF" // byte-order mark
@@ -235,6 +241,7 @@ void testTypographicCharacters()
 }
 
 // The "Inner stages across years" template: stages are the act-level parts and keep their word.
+// @relation(FR-IMP-2, FR-TPL-4, scope=function)
 void testStagePlan()
 {
     const QString plan = "# Tide Tables\n\n"
@@ -265,6 +272,7 @@ void testStagePlan()
            "Part II: Later[Chapter 3: X(Y)] Book 1[]");
 }
 
+// @relation(FR-IMP-5, scope=function)
 void testNothingToFind()
 {
     EXPECT(parse("").isEmpty());

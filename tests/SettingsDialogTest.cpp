@@ -65,6 +65,7 @@ QStringList comboIds(const QComboBox *combo)
     return ids;
 }
 
+// @relation(FR-SET-1, FR-SET-4, scope=function)
 void testDefaults()
 {
     QSettings().clear();
@@ -73,6 +74,7 @@ void testDefaults()
     EXPECT(settings.plannerModel.isEmpty() && settings.proseModel.isEmpty());
 }
 
+// @relation(FR-SET-2, FR-SET-3, FR-SET-4, scope=function)
 void testFetchSelectAndSave()
 {
     FakeServer server;
@@ -109,6 +111,7 @@ void testFetchSelectAndSave()
     EXPECT(after.proseModel == "alpha-27b");
 }
 
+// @relation(FR-SET-3, scope=function)
 void testUnreachableKeepsSelection()
 {
     QTcpServer probe; // a port with nothing listening
@@ -132,6 +135,7 @@ void testUnreachableKeepsSelection()
     EXPECT(AiSettings::load().plannerModel == "planner-x");
 }
 
+// @relation(FR-SET-1, scope=function)
 void testInvalidAddressNotSaved()
 {
     AiSettings saved;

@@ -10,6 +10,7 @@
 #include "PlanChatPanel.h"
 #include "PlanPrompt.h"
 #include "PlanStructure.h"
+#include "ProsePrompt.h"
 #include "SettingsDialog.h"
 
 #include <QAction>
@@ -40,6 +41,7 @@
 
 #include <algorithm>
 #include <utility>
+#include <vector>
 #include <QVBoxLayout>
 
 namespace {
@@ -236,6 +238,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     auto *editorPane = new QWidget(this);
     auto *editorLayout = new QVBoxLayout(editorPane);
     editorLayout->setContentsMargins(0, 0, 0, 0);
+    editorLayout->addWidget(buildProseBar());
     editorLayout->addWidget(m_briefLabel);
     editorLayout->addWidget(m_editor, 1);
     splitter->addWidget(editorPane);
@@ -267,7 +270,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     QMenu *editMenu = menuBar()->addMenu(tr("&Edit"));
     const auto onEditor = [this](void (QPlainTextEdit::*method)()) {
         return [this, method] {
-            if (QPlainTextEdit *edit = focusedEditor()) {
+            if (QPlainTextEdit *edit = focusedEditor(); edit && !edit->isReadOnly()) {
                 (edit->*method)();
             }
         };
@@ -311,6 +314,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         }
     });
     connect(m_editor, &QPlainTextEdit::textChanged, this, &MainWindow::onTextChanged);
+    connect(m_editor, &QPlainTextEdit::selectionChanged, this, &MainWindow::updateProseActions);
 
     showItem(nullptr);
     loadSynopsisAndPlan();
@@ -376,6 +380,7 @@ bool MainWindow::openNovel(const QString &dir, NovelStore::Mode mode)
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     stopPlanGeneration(); // like Stop: keeps what was written so far
+    stopProse();
     m_chat->stop();       // an unfinished chat answer changes nothing
     if (saveAll() ||
         QMessageBox::question(this, tr("NovelWriter"), tr("Some changes could not be saved. Quit anyway?")) ==
@@ -691,6 +696,7 @@ void MainWindow::showItem(QTreeWidgetItem *item)
     if (m_loading) {
         return;
     }
+    stopProse(); // the text written so far stays in the scene it was written for
     saveCurrentScene();
     m_autosaveTimer->stop();
 
@@ -738,7 +744,9 @@ void MainWindow::showItem(QTreeWidgetItem *item)
     }
     m_briefLabel->setText(brief.isEmpty() ? QString() : tr("Brief: %1").arg(brief));
     m_briefLabel->setVisible(!brief.isEmpty());
+    m_proseStatus->clear();
     updateActions();
+    updateProseActions();
     updateStatus();
 }
 
@@ -763,8 +771,367 @@ void MainWindow::onTextChanged()
         return;
     }
     m_sceneWords[*m_currentScene] = countWords(editorText(m_editor));
-    m_autosaveTimer->start();
+    if (!m_proseRequest) {
+        m_autosaveTimer->start(); // generated text is saved once it is complete
+    }
     updateStatus();
+    updateProseActions();
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Prose writer
+// ---------------------------------------------------------------------------------------------------
+
+namespace {
+const char *const kWriteSceneTip = QT_TRANSLATE_NOOP("MainWindow", "Write the whole scene from its brief with the "
+                                                                   "prose writer model.");
+const char *const kExpandTip = QT_TRANSLATE_NOOP("MainWindow", "Rewrite the selected text (or the whole scene if "
+                                                               "nothing is selected) as a longer passage with the "
+                                                               "prose writer model.");
+constexpr auto kProseLengthKey = "prose/length";
+} // namespace
+
+QWidget *MainWindow::buildProseBar()
+{
+    auto *bar = new QWidget(this);
+    auto *layout = new QHBoxLayout(bar);
+    layout->setContentsMargins(6, 4, 6, 0);
+
+    m_writeSceneButton = new QPushButton(tr("Write Scene"), bar);
+    m_writeSceneButton->setObjectName("writeSceneButton");
+    m_expandButton = new QPushButton(tr("Expand"), bar);
+    m_expandButton->setObjectName("expandButton");
+    m_proseLengthCombo = new QComboBox(bar);
+    m_proseLengthCombo->setObjectName("proseLengthCombo");
+    m_proseLengthCombo->setToolTip(tr("How long the written or expanded text should be."));
+    for (const int words : ProsePrompt::kLengths) {
+        m_proseLengthCombo->addItem(tr("%1 words").arg(words), words);
+    }
+    const int saved = QSettings().value(kProseLengthKey, ProsePrompt::kDefaultLength).toInt();
+    m_proseLengthCombo->setCurrentIndex(std::max(0, m_proseLengthCombo->findData(saved)));
+    m_proseStopButton = new QPushButton(tr("Stop"), bar);
+    m_proseStopButton->setObjectName("proseStopButton");
+    m_proseStopButton->hide();
+    m_proseStatus = new QLabel(bar);
+    m_proseStatus->setObjectName("proseStatus");
+    m_proseStatus->setWordWrap(true);
+
+    layout->addWidget(m_writeSceneButton);
+    layout->addWidget(m_expandButton);
+    layout->addWidget(new QLabel(tr("Length:"), bar));
+    layout->addWidget(m_proseLengthCombo);
+    layout->addWidget(m_proseStopButton);
+    layout->addWidget(m_proseStatus, 1);
+
+    m_proseRefresh = new QTimer(this);
+    m_proseRefresh->setSingleShot(true);
+    m_proseRefresh->setInterval(100);
+    connect(m_proseRefresh, &QTimer::timeout, this, [this] { showProseText(m_pendingProse); });
+    connect(m_writeSceneButton, &QPushButton::clicked, this, &MainWindow::writeScene);
+    connect(m_expandButton, &QPushButton::clicked, this, &MainWindow::expandPassage);
+    connect(m_proseStopButton, &QPushButton::clicked, this, [this] {
+        if (m_proseRequest) {
+            stopProse();
+            m_proseStatus->setText(tr("Stopped. The text written so far is kept; Undo removes it."));
+        }
+    });
+    connect(m_proseLengthCombo, &QComboBox::currentIndexChanged, this,
+            [this] { QSettings().setValue(kProseLengthKey, proseLength()); });
+    return bar;
+}
+
+int MainWindow::proseLength() const
+{
+    return m_proseLengthCombo->currentData().toInt();
+}
+
+QString MainWindow::proseModel() const
+{
+    return AiSettings::load().proseModel;
+}
+
+void MainWindow::updateProseActions()
+{
+    if (!m_writeSceneButton) {
+        return; // still building the window
+    }
+    const bool idle = !m_proseRequest && m_currentScene.has_value();
+    m_writeSceneButton->setEnabled(idle);
+    m_expandButton->setEnabled(idle && !editorText(m_editor).trimmed().isEmpty());
+    m_expandButton->setText(m_editor->textCursor().hasSelection() ? tr("Expand Selection") : tr("Expand"));
+    m_proseLengthCombo->setEnabled(!m_proseRequest);
+    m_proseStopButton->setVisible(m_proseRequest != nullptr);
+    const QString model = proseModel();
+    const QString uses =
+        model.isEmpty() ? tr("No prose writer model is chosen in Settings.") : tr("Uses %1.").arg(model);
+    m_writeSceneButton->setToolTip(tr(kWriteSceneTip) + " " + uses);
+    m_expandButton->setToolTip(tr(kExpandTip) + " " + uses);
+}
+
+bool MainWindow::checkProseModel(const QString &title)
+{
+    if (!proseModel().isEmpty() && normalizeServerUrl(AiSettings::load().serverUrl).isValid()) {
+        return true;
+    }
+    QMessageBox box(QMessageBox::Information, title,
+                    tr("Choose a prose writer model and an LM Studio server in Settings first."), QMessageBox::Cancel,
+                    this);
+    QPushButton *open = box.addButton(tr("Open Settings..."), QMessageBox::AcceptRole);
+    box.exec();
+    if (box.clickedButton() == open) {
+        openSettings();
+    }
+    return false;
+}
+
+ProsePrompt::SceneContext MainWindow::sceneContext(Id scene) const
+{
+    constexpr int kPreviousWords = 600;
+    ProsePrompt::SceneContext context;
+    context.synopsis = editorText(m_synopsisEdit);
+
+    struct Place {
+        const NovelStore::Act *act;
+        const NovelStore::Chapter *chapter;
+        const NovelStore::Scene *scene;
+    };
+    const auto acts = m_store->acts();
+    std::vector<Place> order; // every scene in reading order
+    for (const auto &act : acts) {
+        for (const auto &chapter : act.chapters) {
+            for (const auto &s : chapter.scenes) {
+                order.push_back({&act, &chapter, &s});
+            }
+        }
+    }
+    const auto it = std::find_if(order.begin(), order.end(), [&](const Place &p) { return p.scene->id == scene; });
+    if (it == order.end()) {
+        return context;
+    }
+    context.actTitle = QString::fromStdString(it->act->title);
+    context.actBrief = QString::fromStdString(it->act->brief);
+    context.chapterTitle = QString::fromStdString(it->chapter->title);
+    context.chapterBrief = QString::fromStdString(it->chapter->brief);
+    context.sceneTitle = QString::fromStdString(it->scene->title);
+    context.sceneBrief = QString::fromStdString(it->scene->brief);
+
+    // The end of the nearest earlier scene that has text.
+    for (auto prev = it; prev != order.begin();) {
+        --prev;
+        const QString text = QString::fromStdString(m_store->sceneText(prev->scene->id));
+        if (!text.trimmed().isEmpty()) {
+            context.previousText = ProsePrompt::lastWords(text, kPreviousWords);
+            break;
+        }
+    }
+    if (const auto next = std::next(it); next != order.end()) {
+        const bool useChapter = next->scene->brief.empty() && next->chapter != it->chapter;
+        context.nextBrief = QString::fromStdString(useChapter ? next->chapter->brief : next->scene->brief);
+    }
+    return context;
+}
+
+void MainWindow::writeScene()
+{
+    const QString title = tr("Write Scene");
+    if (!m_store || !m_currentScene || m_proseRequest || !saveCurrentScene() || !checkProseModel(title)) {
+        return;
+    }
+    const ProsePrompt::SceneContext context = sceneContext(*m_currentScene);
+    if (context.sceneBrief.trimmed().isEmpty() && context.chapterBrief.trimmed().isEmpty()) {
+        QMessageBox::information(this, title,
+                                 tr("This scene has no brief to write it from. Create the structure from a plan to "
+                                    "get briefs, or write a short draft of the scene and use Expand."));
+        return;
+    }
+    const QString text = editorText(m_editor);
+    if (!text.trimmed().isEmpty() &&
+        QMessageBox::question(this, title,
+                              tr("Replace the scene's text with a new scene written from the brief? Undo brings "
+                                 "the current text back.")) != QMessageBox::Yes) {
+        return;
+    }
+    startProse(ProsePrompt::sceneMessages(context, proseLength()), 0, static_cast<int>(text.size()));
+}
+
+void MainWindow::expandPassage()
+{
+    const QString title = tr("Expand");
+    if (!m_store || !m_currentScene || m_proseRequest || !checkProseModel(title)) {
+        return;
+    }
+    const QString text = editorText(m_editor);
+    const QTextCursor cursor = m_editor->textCursor();
+    int start = cursor.hasSelection() ? cursor.selectionStart() : 0;
+    int end = cursor.hasSelection() ? cursor.selectionEnd() : static_cast<int>(text.size());
+    // Leave the whitespace around the passage where it is.
+    while (start < end && text[start].isSpace()) {
+        ++start;
+    }
+    while (end > start && text[end - 1].isSpace()) {
+        --end;
+    }
+    const QString passage = text.mid(start, end - start);
+    if (passage.isEmpty()) {
+        return;
+    }
+    const qsizetype words = countWords(passage);
+    if (words >= proseLength()) {
+        QMessageBox::information(
+            this, title, tr("The passage already has %1 words. Choose a longer length to expand it to.").arg(words));
+        return;
+    }
+    // The model sees only the opening of the text after the passage: enough to know where to stop, too little to
+    // invite rewriting it. Repeats are looked for in a longer stretch.
+    constexpr int kBeforeWords = 400, kAfterPromptWords = 40, kAfterCheckWords = 300;
+    const QString after = ProsePrompt::firstWords(text.mid(end), kAfterCheckWords);
+    const auto messages = ProsePrompt::expandMessages(
+        sceneContext(*m_currentScene), ProsePrompt::lastWords(text.left(start), kBeforeWords), passage,
+        ProsePrompt::trimToWords(after, kAfterPromptWords), proseLength());
+    startProse(messages, start, end - start, after);
+}
+
+void MainWindow::startProse(const QList<ChatMessage> &messages, int start, int length, const QString &after)
+{
+    m_proseModelInUse = proseModel();
+    m_proseStart = start;
+    m_proseLength = length;
+    m_proseOriginal = editorText(m_editor).mid(start, length);
+    m_proseAfter = after;
+    m_proseWordLimit = ProsePrompt::wordLimit(proseLength());
+    m_proseEdited = false;
+    m_pendingProse.clear();
+
+    m_proseRequest = new ChatCompletion(normalizeServerUrl(AiSettings::load().serverUrl), m_proseModelInUse,
+                                        messages, ProsePrompt::kTemperature, this);
+    connect(m_proseRequest, &ChatCompletion::textChanged, this, [this](const QString &text) {
+        m_pendingProse = ProsePrompt::cleanProse(text);
+        if (const QString cut = ProsePrompt::removeEcho(m_pendingProse, m_proseAfter); cut != m_pendingProse) {
+            // The model has started rewriting the text that follows the passage: what comes now is a duplicate.
+            m_proseRequest->abort();
+            m_pendingProse = cut;
+            onProseFinished(m_pendingProse, false);
+            m_proseStatus->setText(m_proseStatus->text() + " " +
+                                   tr("%1 began rewriting the text after the passage, so that part was left out.")
+                                       .arg(m_proseModelInUse));
+            return;
+        }
+        if (countWords(m_pendingProse) > m_proseWordLimit) {
+            // Past the length the author asked for (some models never stop): end at the last whole sentence.
+            m_proseRequest->abort();
+            m_pendingProse = ProsePrompt::trimToWords(m_pendingProse, m_proseWordLimit);
+            onProseFinished(m_pendingProse, false);
+            m_proseStatus->setText(m_proseStatus->text() + " " +
+                                   tr("%1 kept writing past the chosen length, so it was stopped at the end of a "
+                                      "sentence.")
+                                       .arg(m_proseModelInUse));
+            return;
+        }
+        if (!m_proseRefresh->isActive()) {
+            m_proseRefresh->start();
+        }
+    });
+    connect(m_proseRequest, &ChatCompletion::thinking, this, [this] {
+        if (m_pendingProse.isEmpty()) {
+            m_proseStatus->setText(tr("%1 is thinking...").arg(m_proseModelInUse));
+        }
+    });
+    connect(m_proseRequest, &ChatCompletion::finished, this, &MainWindow::onProseFinished);
+    connect(m_proseRequest, &ChatCompletion::failed, this, &MainWindow::onProseFailed);
+
+    m_editor->setReadOnly(true); // the model's text must not clash with edits
+    m_tree->setEnabled(false);
+    updateProseActions();
+    m_proseStatus->setText(
+        tr("Writing with %1... (LM Studio may need a moment to load the model)").arg(m_proseModelInUse));
+    m_proseRequest->start();
+}
+
+// Puts `text` into the editor in place of the previously generated text. All updates of one request form a single
+// undo step, so Undo brings back exactly the text from before.
+void MainWindow::showProseText(const QString &text)
+{
+    if (!m_proseEdited && text.isEmpty()) {
+        return; // keep the original text until the model writes something
+    }
+    if (m_proseEdited && text == editorText(m_editor).mid(m_proseStart, m_proseLength)) {
+        return;
+    }
+    QTextCursor cursor(m_editor->document());
+    if (m_proseEdited) {
+        cursor.joinPreviousEditBlock();
+    } else {
+        cursor.beginEditBlock();
+    }
+    cursor.setPosition(m_proseStart);
+    cursor.setPosition(m_proseStart + m_proseLength, QTextCursor::KeepAnchor);
+    cursor.insertText(text);
+    cursor.endEditBlock();
+    m_proseEdited = true;
+    m_proseLength = static_cast<int>(text.size());
+    m_editor->setTextCursor(cursor); // follow the text as it is written
+    m_editor->ensureCursorVisible();
+    if (m_proseRequest && !text.isEmpty()) {
+        m_proseStatus->setText(
+            tr("Writing with %1... %n word(s) so far", nullptr, int(countWords(text))).arg(m_proseModelInUse));
+    }
+}
+
+void MainWindow::finishProse()
+{
+    if (m_proseRequest) {
+        m_proseRequest->disconnect(this); // nothing more from it, even if it was ended from one of its signals
+        m_proseRequest->deleteLater();
+        m_proseRequest = nullptr;
+    }
+    m_proseRefresh->stop();
+    m_editor->setReadOnly(false);
+    m_tree->setEnabled(true);
+    updateProseActions();
+    saveCurrentScene();
+}
+
+void MainWindow::stopProse()
+{
+    if (!m_proseRequest) {
+        return;
+    }
+    m_proseRequest->abort();
+    showProseText(m_pendingProse); // keep what was written so far
+    finishProse();
+}
+
+void MainWindow::onProseFinished(const QString &text, bool truncated)
+{
+    m_pendingProse = ProsePrompt::trimToWords(ProsePrompt::removeEcho(ProsePrompt::cleanProse(text), m_proseAfter),
+                                              m_proseWordLimit);
+    showProseText(m_pendingProse);
+    finishProse();
+    const QString model = m_proseModelInUse;
+    if (m_pendingProse.trimmed().isEmpty()) {
+        m_proseStatus->setText(truncated ? tr("%1 reached its length limit before writing anything. Increase the "
+                                              "model's context length in LM Studio, or choose a non-reasoning model.")
+                                               .arg(model)
+                                         : tr("%1 returned an empty answer.").arg(model));
+        return;
+    }
+    QString status =
+        tr("Done: %n word(s). Undo brings back the previous text.", nullptr, int(countWords(m_pendingProse)));
+    if (truncated) {
+        status += " " + tr("Warning: the text was cut off because the model reached its length limit.");
+    }
+    m_proseStatus->setText(status);
+}
+
+void MainWindow::onProseFailed(const QString &error)
+{
+    // A failed request changes nothing: put the original text back.
+    if (m_proseEdited) {
+        showProseText(m_proseOriginal);
+    }
+    finishProse();
+    m_proseStatus->setText(tr("Writing failed."));
+    QMessageBox::warning(this, tr("Prose Writer"), tr("Could not write with %1:\n\n%2").arg(m_proseModelInUse, error));
 }
 
 // ---------------------------------------------------------------------------------------------------

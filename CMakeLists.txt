@@ -42,6 +42,8 @@ add_library(novelai STATIC
     src/PlanStructure.cpp
     src/PlanStructure.h
     src/PlanPrompt.h
+    src/ProsePrompt.cpp
+    src/ProsePrompt.h
 )
 target_include_directories(novelai PUBLIC src)
 target_link_libraries(novelai PUBLIC Qt6::Core Qt6::Network)
@@ -174,6 +176,11 @@ if(BUILD_TESTING)
     novelwriter_warnings(planstructure_test)
     add_test(NAME planstructure COMMAND planstructure_test)
 
+    add_executable(prose_test tests/ProsePromptTest.cpp)
+    target_link_libraries(prose_test PRIVATE novelai)
+    novelwriter_warnings(prose_test)
+    add_test(NAME prose COMMAND prose_test)
+
     add_executable(mainwindow_test tests/MainWindowTest.cpp)
     target_link_libraries(mainwindow_test PRIVATE novelui)
     novelwriter_warnings(mainwindow_test)
@@ -184,7 +191,18 @@ if(BUILD_TESTING)
         "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${QT_BIN_DIR}/../plugins")
     if(WIN32)
         # Find the Qt DLLs without relying on windeployqt having run.
-        set_tests_properties(lmstudio settings chat planstructure mainwindow PROPERTIES
+        set_tests_properties(lmstudio settings chat planstructure prose mainwindow PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${QT_BIN_DIR}")
+    endif()
+
+    # Requirements (docs/*.sdoc): StrictDoc fails when a document is malformed or an @relation marker in the
+    # sources names a requirement that doesn't exist. Only when StrictDoc is installed (tools/requirements-docs.txt).
+    find_program(STRICTDOC_EXECUTABLE strictdoc
+        HINTS "${CMAKE_CURRENT_SOURCE_DIR}/.venv/Scripts" "${CMAKE_CURRENT_SOURCE_DIR}/.venv/bin")
+    if(STRICTDOC_EXECUTABLE)
+        add_test(NAME requirements
+            COMMAND "${STRICTDOC_EXECUTABLE}" export "${CMAKE_CURRENT_SOURCE_DIR}"
+                    --output-dir "${CMAKE_CURRENT_BINARY_DIR}/strictdoc")
+        set_tests_properties(requirements PROPERTIES TIMEOUT 300)
     endif()
 endif()

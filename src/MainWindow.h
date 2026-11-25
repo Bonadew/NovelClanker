@@ -2,6 +2,7 @@
 
 #include "LmStudioClient.h"
 #include "NovelStore.h"
+#include "ProsePrompt.h"
 
 #include <QMainWindow>
 #include <QPointer>
@@ -64,6 +65,24 @@ class MainWindow : public QMainWindow
     bool saveCurrentScene();
     void onTextChanged();
 
+    // Prose writer: write the scene from its brief, or expand a passage, with the prose model
+    QWidget *buildProseBar();
+    void writeScene();
+    void expandPassage();
+    // Streams the prose model's answer into the editor, replacing the text in [start, start + length).
+    // `after` is the text that follows the range (to remove a repeat of it from the answer).
+    void startProse(const QList<ChatMessage> &messages, int start, int length, const QString &after = {});
+    void showProseText(const QString &text);
+    void stopProse();
+    void onProseFinished(const QString &text, bool truncated);
+    void onProseFailed(const QString &error);
+    void finishProse();
+    void updateProseActions();
+    int proseLength() const; // the chosen length in words
+    QString proseModel() const;
+    bool checkProseModel(const QString &title); // false (after telling the user) if no prose model is set
+    ProsePrompt::SceneContext sceneContext(Id scene) const;
+
     // Synopsis and plan views
     QWidget *buildSynopsisView();
     QWidget *buildPlanView();
@@ -125,6 +144,22 @@ class MainWindow : public QMainWindow
     QLabel *m_briefLabel = nullptr; // brief of the selected act/chapter/scene
     MarkdownHighlighter *m_highlighter = nullptr;
     QTimer *m_autosaveTimer = nullptr;
+
+    QPushButton *m_writeSceneButton = nullptr;
+    QPushButton *m_expandButton = nullptr;
+    QComboBox *m_proseLengthCombo = nullptr;
+    QPushButton *m_proseStopButton = nullptr;
+    QLabel *m_proseStatus = nullptr;
+    QTimer *m_proseRefresh = nullptr; // throttles editor updates while prose streams in
+    QPointer<ChatCompletion> m_proseRequest;
+    QString m_proseModelInUse;
+    QString m_pendingProse;   // latest cleaned answer
+    QString m_proseOriginal;  // the text being replaced, restored if the request fails
+    int m_proseStart = 0;     // editor range holding the generated text
+    int m_proseLength = 0;
+    QString m_proseAfter;     // the text after the range
+    int m_proseWordLimit = 0; // the request is ended once the text is longer than this
+    bool m_proseEdited = false; // the generated text has been put into the editor at least once
 
     QTabWidget *m_tabs = nullptr;
     QPlainTextEdit *m_synopsisEdit = nullptr;

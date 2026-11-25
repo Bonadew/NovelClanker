@@ -15,6 +15,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QTabWidget>
+#include <QTextCursor>
 #include <QTextBrowser>
 #include <QTreeWidget>
 
@@ -122,6 +123,7 @@ const QString kPlan = "# The Letter\n\n## Premise\nMira returns a letter.\n\n## 
 const QByteArray kPlanStream = sseStream({"<think>outline</think>", "# The Letter\n\n",
                                           "## Premise\nMira returns a letter.\n\n", "## Structure\n\n### Act 1: Home\n"});
 
+// @relation(FR-PLN-1, FR-PLN-3, FR-PLN-4, FR-GEN-1, FR-GEN-2, FR-GEN-3, FR-SYN-3, scope=function)
 void testMultiplePlans(const fs::path &dir)
 {
     FakeServer server;
@@ -186,6 +188,7 @@ void testMultiplePlans(const fs::path &dir)
     EXPECT(store.planText(store.plans()[2].id) == "# My own plan");
 }
 
+// @relation(FR-PLN-1, FR-SYN-1, scope=function)
 void testReopenShowsPlans(const fs::path &dir)
 {
     MainWindow w;
@@ -199,6 +202,7 @@ void testReopenShowsPlans(const fs::path &dir)
     EXPECT(u.planOrigin->text() == "Written by hand.");
 }
 
+// @relation(FR-GEN-4, FR-GEN-7, NFR-2, scope=function)
 void testStopKeepsPartialPlan(const fs::path &dir)
 {
     FakeServer server; // a stream that never finishes
@@ -228,6 +232,7 @@ void testStopKeepsPartialPlan(const fs::path &dir)
     EXPECT(store.synopsis() == "A synopsis.");
 }
 
+// @relation(FR-GEN-5, scope=function)
 void testEmptyAnswerAddsNoPlan(const fs::path &dir)
 {
     FakeServer server; // a reasoning model that hits its length limit before writing anything
@@ -253,6 +258,7 @@ void testEmptyAnswerAddsNoPlan(const fs::path &dir)
     EXPECT(store.planText(store.plans()[0].id) == "# Keep me");
 }
 
+// @relation(FR-SYN-2, scope=function)
 void testPlannerModelOverride(const fs::path &dir)
 {
     FakeServer server;
@@ -306,6 +312,7 @@ void testPlannerModelOverride(const fs::path &dir)
     }
 }
 
+// @relation(FR-CHT-1, FR-CHT-2, FR-CHT-3, FR-CHT-6, scope=function)
 void testChatRefinesPlan(const fs::path &dir)
 {
     FakeServer server;
@@ -402,6 +409,7 @@ void testChatRefinesPlan(const fs::path &dir)
     EXPECT(history.size() == 6 && history[1].planApplied && !history[3].planApplied && !history[5].planApplied);
 }
 
+// @relation(FR-CHT-5, scope=function)
 void testChatHistoryIsRestored(const fs::path &dir)
 {
     MainWindow w;
@@ -429,6 +437,7 @@ QString treeOutline(QTreeWidget *tree)
     return acts.join(' ');
 }
 
+// @relation(FR-IMP-3, FR-IMP-4, FR-IMP-5, FR-STR-7, scope=function)
 void testCreateStructureFromPlan(const fs::path &dir)
 {
     FakeServer server;
@@ -483,6 +492,7 @@ void testCreateStructureFromPlan(const fs::path &dir)
     EXPECT(store.plans().size() == 1); // the plan itself is unchanged
 }
 
+// @relation(FR-TPL-1, FR-PLN-4, scope=function)
 void testPlanTemplateChoice(const fs::path &dir)
 {
     FakeServer server;
@@ -538,6 +548,127 @@ void testPlanTemplateChoice(const fs::path &dir)
     EXPECT(w.findChild<QComboBox *>("planTemplateCombo")->currentData().toString() == "inner-stages");
 }
 
+QString requestUserPrompt(const FakeServer &server)
+{
+    const QJsonArray messages = QJsonDocument::fromJson(server.lastRequestBody).object().value("messages").toArray();
+    return messages.isEmpty() ? QString() : messages.last().toObject().value("content").toString();
+}
+
+// @relation(FR-PRS-1, FR-PRS-2, FR-PRS-3, FR-PRS-5, FR-PRS-8, FR-PRS-9, FR-PRS-10, FR-PRS-11, FR-PRS-15, NFR-2, scope=function)
+void testProseWriter(const fs::path &dir)
+{
+    FakeServer server;
+    useServer(server, "planner-x");
+    AiSettings settings = AiSettings::load();
+    settings.proseModel = "writer-x";
+    settings.save();
+    const QString plan = "# The Letter\n\n## Structure\n\n### Act 1: Home\n\n#### Chapter 1: The Cold Room\n"
+                         "- **Scene 1: The Letter**: POV: Mira. She finds the letter.\n"
+                         "- **Scene 2: The Council**: POV: Mira. The council offers her the post.\n";
+    {
+        MainWindow w;
+        EXPECT(w.openNovel(toQ(dir), NovelStore::Mode::Create));
+        const Ui u = ui(w);
+        auto *tree = w.findChild<QTreeWidget *>("manuscriptTree");
+        auto *scene = w.findChild<QPlainTextEdit *>("sceneEdit");
+        auto *write = w.findChild<QPushButton *>("writeSceneButton");
+        auto *expand = w.findChild<QPushButton *>("expandButton");
+        auto *length = w.findChild<QComboBox *>("proseLengthCombo");
+        auto *stop = w.findChild<QPushButton *>("proseStopButton");
+        auto *status = w.findChild<QLabel *>("proseStatus");
+        EXPECT(write && expand && length && stop && status);
+        u.synopsis->setPlainText("Mira, a lighthouse keeper, finds a letter.");
+        u.newPlan->click();
+        u.plan->insertPlainText(plan);
+        w.findChild<QPushButton *>("createStructureButton")->click();
+        EXPECT(tree->currentItem() && tree->currentItem()->text(0) == "The Letter");
+        EXPECT(write->isEnabled() && !expand->isEnabled()); // nothing to expand in an empty scene
+        EXPECT(length->currentData().toInt() == 500);
+
+        // Write the scene from its brief. The preamble is removed; the text streams into the editor.
+        server.routes["/v1/chat/completions"] = {
+            200, sseStream({"Here is the scene:\n\n", "Mira climbed ", "the stairs.\n\nThe letter waited."}),
+            "text/event-stream"};
+        length->setCurrentIndex(length->findData(1000));
+        write->click();
+        EXPECT(!write->isEnabled() && scene->isReadOnly() && !tree->isEnabled());
+        EXPECT(waitFor([&] { return status->text().startsWith("Done"); }));
+        EXPECT(scene->toPlainText() == "Mira climbed the stairs.\n\nThe letter waited.");
+        EXPECT(!scene->isReadOnly() && tree->isEnabled() && write->isEnabled() && expand->isEnabled());
+        const QJsonObject request = QJsonDocument::fromJson(server.lastRequestBody).object();
+        EXPECT(request.value("model").toString() == "writer-x");
+        QString prompt = requestUserPrompt(server);
+        EXPECT(prompt.contains("POV: Mira. She finds the letter.") && prompt.contains("about 1000 words"));
+        EXPECT(prompt.contains("<synopsis>\nMira, a lighthouse keeper, finds a letter."));
+        EXPECT(prompt.contains("<next_scene_brief>\nPOV: Mira. The council offers her the post."));
+        EXPECT(!prompt.contains("<previous_text>"));
+        scene->undo(); // the whole generated scene is one undo step
+        EXPECT(scene->toPlainText().isEmpty());
+        scene->redo();
+        EXPECT(scene->toPlainText() == "Mira climbed the stairs.\n\nThe letter waited.");
+
+        // Expand a selected passage in steps; the text around it stays.
+        scene->setPlainText("Intro.\n\nShe opens it.\n\nThe end came soon.");
+        QTextCursor cursor = scene->textCursor();
+        cursor.setPosition(7); // includes the blank line before the passage, which is left alone
+        cursor.setPosition(21, QTextCursor::KeepAnchor);
+        scene->setTextCursor(cursor);
+        EXPECT(expand->text() == "Expand Selection");
+        length->setCurrentIndex(length->findData(200));
+        // The model repeats the text after the passage; the repeat is dropped.
+        server.routes["/v1/chat/completions"] = {200, sseStream({"She opens it slowly, ", "and reads.\n\nThe end came soon."}),
+                                                 "text/event-stream"};
+        expand->click();
+        EXPECT(waitFor([&] { return status->text().startsWith("Done"); }));
+        EXPECT(scene->toPlainText() == "Intro.\n\nShe opens it slowly, and reads.\n\nThe end came soon.");
+        prompt = requestUserPrompt(server);
+        EXPECT(prompt.contains("<passage>\nShe opens it.\n</passage>"));
+        EXPECT(prompt.contains("<text_before>\nIntro.\n</text_before>"));
+        EXPECT(prompt.contains("<text_after>\nThe end came soon.\n</text_after>"));
+        EXPECT(prompt.contains("about 200 words"));
+        scene->undo();
+        EXPECT(scene->toPlainText() == "Intro.\n\nShe opens it.\n\nThe end came soon.");
+        scene->redo();
+
+        // The next scene gets the end of this one as context. Stop keeps what was written so far.
+        tree->setCurrentItem(tree->topLevelItem(0)->child(0)->child(1));
+        EXPECT(scene->toPlainText().isEmpty() && status->text().isEmpty());
+        server.routes["/v1/chat/completions"] = {200, sseStream({"The council hall ", "was cold."}, "", false),
+                                                 "text/event-stream", true};
+        write->click();
+        EXPECT(waitFor([&] { return scene->toPlainText() == "The council hall was cold."; }));
+        EXPECT(stop->isVisibleTo(&w));
+        prompt = requestUserPrompt(server);
+        EXPECT(prompt.contains("<previous_text>\nIntro.\n\nShe opens it slowly, and reads.\n\nThe end came soon.\n</previous_text>"));
+        EXPECT(!prompt.contains("<next_scene_brief>"));
+        stop->click();
+        EXPECT(status->text().startsWith("Stopped"));
+        EXPECT(!scene->isReadOnly() && !stop->isVisibleTo(&w) && write->isEnabled());
+        EXPECT(scene->toPlainText() == "The council hall was cold.");
+
+        // A model that keeps writing far past the chosen length is stopped at the end of a sentence.
+        QStringList runaway;
+        for (int i = 0; i < 120; ++i) {
+            runaway << QStringLiteral("The wind rose again. ");
+        }
+        server.routes["/v1/chat/completions"] = {200, sseStream(runaway, "", false), "text/event-stream", true};
+        scene->selectAll();
+        expand->click();
+        EXPECT(waitFor([&] { return status->text().startsWith("Done"); }));
+        EXPECT(status->text().contains("kept writing past the chosen length"));
+        const qsizetype words = scene->toPlainText().split(' ', Qt::SkipEmptyParts).size();
+        EXPECT(words == 248); // 62 whole sentences of four words: the most within 250
+        EXPECT(scene->toPlainText().endsWith("The wind rose again."));
+        EXPECT(!scene->isReadOnly() && !stop->isVisibleTo(&w) && expand->isEnabled());
+        w.close();
+    }
+    NovelStore store(dir, NovelStore::Mode::Open);
+    const auto &scenes = store.acts()[0].chapters[0].scenes;
+    EXPECT(store.sceneText(scenes[0].id) == "Intro.\n\nShe opens it slowly, and reads.\n\nThe end came soon.");
+    EXPECT(QString::fromStdString(store.sceneText(scenes[1].id)).startsWith("The wind rose again."));
+    EXPECT(QSettings().value("prose/length").toInt() == 200); // the length choice is remembered
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -563,6 +694,7 @@ int main(int argc, char **argv)
     testChatHistoryIsRestored(root / "chat.novel");
     testCreateStructureFromPlan(root / "structure.novel");
     testPlanTemplateChoice(root / "template.novel");
+    testProseWriter(root / "prose.novel");
 
     QSettings().clear();
     if (g_failures == 0) {

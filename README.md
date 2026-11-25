@@ -59,6 +59,21 @@ Runs on Windows, Linux, and macOS.
   fails or produces nothing, no plan is added. If the model hits its length limit the plan view says so; raise
   the model's context length in LM Studio (a full plan needs roughly 8-16k tokens).
 
+- Above the scene editor, the **prose writer** model (chosen in Edit → Settings) writes text, at the length
+  chosen in **Length** (200, 500, 1000 or 2000 words; the choice is remembered):
+  - **Write Scene** writes the whole scene from its brief (or its chapter's brief). The model also sees the
+    synopsis, the act and chapter, the end of the previous scene (so it continues from there) and the next
+    scene's brief (so it stops before it). If the scene already has text you are asked before it is replaced.
+  - **Expand** rewrites the selected text (**Expand Selection**), or the whole scene if nothing is selected,
+    as a longer passage, keeping its events and the text around it. Write a few sentences, expand them to
+    200 words, then select the result and expand it to 500, and so on.
+  - Models count words poorly and some never stop on their own, so a request is ended once the text passes the
+    chosen length by a quarter (at least 50 words), cutting at the end of the last whole sentence. Models also
+    tend to go on and rewrite the text that follows an expanded passage; when the answer shares a run of five
+    words with that text, it is cut at the start of that sentence (and the request is stopped).
+  - The text streams into the editor; **Stop** keeps what has been written so far. Each generation is one
+    undo step, so **Ctrl+Z** brings back the previous text. If the request fails, the text is left unchanged.
+
 ### The plan prompt
 
 The prompts are in `src/PlanPrompt.cpp`, one per template; the three-act one is described here. It asks the model to act as a developmental editor and produce a plan
@@ -174,6 +189,10 @@ LM Studio (`NOVELWRITER_LIVE_LMSTUDIO=http://127.0.0.1:1234`):
   `NOVELWRITER_LIVE_REFINE_REQUEST="..."` it refines that plan through the plan chat instead.
   `NOVELWRITER_LIVE_TEMPLATE=<template id>` (`three-act`, `inner-stages`) and
   `NOVELWRITER_LIVE_SYNOPSIS_FILE=<file>` choose the template and replace the sample synopsis.
+- `prose_test` with `NOVELWRITER_LIVE_PROSE_MODEL=<model id>` expands a one-sentence sketch to 200 and 500 words,
+  expands an opening sentence that a long paragraph follows (reporting repeats of that paragraph;
+  `NOVELWRITER_LIVE_OPENING_ONLY=1` runs only this) and writes a 500-word scene, printing the word counts
+  (`NOVELWRITER_LIVE_RUNS=<n>` repeats each, `NOVELWRITER_LIVE_SHOW=1` prints the text).
 
 To see how plans are read into acts/chapters/scenes, run `planstructure_test` with
 `NOVELWRITER_PARSE_PLAN=<plan file>`, or with `NOVELWRITER_PARSE_NOVEL=<novel folder>` to check every plan in
@@ -181,6 +200,30 @@ a novel (it flags briefs that swallowed a heading). Use a copy of the novel: ope
 housekeeping files.
 
 For a Debug build, run `conan install` again with `-s build_type=Debug` and use the `conan-debug` presets.
+
+### Requirements (StrictDoc)
+
+The software requirements are in [docs/requirements.sdoc](docs/requirements.sdoc), managed with
+[StrictDoc](https://strictdoc.readthedocs.io). Tests point at the requirements they verify with comments such as
+`// @relation(FR-PRS-10, scope=function)`; StrictDoc links each requirement to those test functions. Install it
+once into a virtual environment (Python 3.12):
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\python -m pip install -r tools/requirements-docs.txt
+```
+
+Then export static HTML (open `build/strictdoc/html/index.html`; the traceability matrix and source coverage
+pages show which requirements have tests), or browse and edit in StrictDoc's web UI:
+
+```powershell
+.venv\Scripts\strictdoc export . --output-dir build/strictdoc
+.venv\Scripts\strictdoc server .
+```
+
+When StrictDoc is installed in `.venv` at configure time, CTest also runs a `requirements` test that fails if the
+document is malformed or a `@relation` marker names a requirement that doesn't exist. Requirement text is
+reStructuredText; each requirement has `PRIORITY` (Must/Should/Could) and `STATUS` (Implemented/Planned).
 
 ### Distributable app
 
@@ -195,6 +238,9 @@ tested). Linux packaging (e.g. AppImage) isn't set up yet; run the binary from t
 ## Project layout
 
 ```
+docs/requirements.sdoc    Software requirements specification (StrictDoc)
+strictdoc_config.py       StrictDoc project configuration
+tools/requirements-docs.txt  Documentation tooling (StrictDoc), installed into .venv
 conanfile.py              Conan dependencies (Qt 6 qtbase incl. Network, RocksDB)
 profiles/windows-msvc     Conan profile for Windows (MSVC, C++20, Ninja)
 CMakeLists.txt            Build definition
@@ -212,5 +258,7 @@ src/PlanPrompt.*          The prompt that turns a synopsis into a plan
 src/PlanChat.*            Plan refinement chat: prompt, reply parsing, history
 src/PlanChatPanel.*       The chat box under the plan
 src/PlanStructure.*       Reads acts/chapters/scenes (with briefs) out of a plan
-tests/                    Storage, LM Studio, chat, plan parsing, settings and main window tests (CTest)
+src/ProsePrompt.*         Prose writer prompts: write a scene from its brief, expand a passage
+tests/                    Storage, LM Studio, chat, plan parsing, prose prompts, settings and main window
+                          tests (CTest)
 ```

@@ -1,0 +1,1202 @@
+[DOCUMENT]
+TITLE: NovelWriter: Software Requirements Specification
+OPTIONS:
+  VIEW_STYLE: Table
+
+[GRAMMAR]
+ELEMENTS:
+- TAG: SECTION
+  PROPERTIES:
+    IS_COMPOSITE: True
+  FIELDS:
+  - TITLE: UID
+    TYPE: String
+    REQUIRED: False
+  - TITLE: TITLE
+    TYPE: String
+    REQUIRED: True
+- TAG: TEXT
+  FIELDS:
+  - TITLE: UID
+    TYPE: String
+    REQUIRED: False
+  - TITLE: STATEMENT
+    TYPE: String
+    REQUIRED: True
+- TAG: REQUIREMENT
+  FIELDS:
+  - TITLE: UID
+    TYPE: String
+    REQUIRED: True
+  - TITLE: PRIORITY
+    TYPE: SingleChoice(Must, Should, Could)
+    REQUIRED: True
+  - TITLE: STATUS
+    TYPE: SingleChoice(Implemented, Planned)
+    REQUIRED: True
+  - TITLE: AREA
+    TYPE: String
+    REQUIRED: False
+  - TITLE: TITLE
+    TYPE: String
+    REQUIRED: False
+  - TITLE: STATEMENT
+    TYPE: String
+    REQUIRED: True
+  - TITLE: COMMENT
+    TYPE: String
+    REQUIRED: False
+  RELATIONS:
+  - TYPE: Parent
+  - TYPE: File
+
+[TEXT]
+STATEMENT: >>>
+NovelWriter is a cross-platform desktop application for planning and writing novels with help from local language models. This specification records what the application must do, as built on the ``prose-writer`` branch, and what is planned next.
+<<<
+
+[[SECTION]]
+TITLE: Introduction
+
+[TEXT]
+STATEMENT: >>>
+The scope is the desktop application: its manuscript editor, novel storage, synopsis and plan workflow, prose writer, and its integration with an LM Studio server. LM Studio itself, the models it serves and the operating systems are outside the scope.
+<<<
+
+[TEXT]
+STATEMENT: >>>
+.. list-table::
+   :header-rows: 1
+
+   * - Term
+     - Meaning
+   * - Novel
+     - One book, stored as a RocksDB database folder named ``*.novel``
+   * - Act, chapter, scene
+     - The manuscript hierarchy; only scenes hold prose text. Act-level parts may also be called stages, parts or books
+   * - Brief
+     - A short description of what an act, chapter or scene is for, usually taken from a plan
+   * - Synopsis
+     - The author's summary of the story, stored exactly as written
+   * - Plan
+     - A Markdown outline of the novel; a novel can hold several
+   * - Plan template
+     - The structural model a plan is generated in, such as three acts or inner stages
+   * - Planner model
+     - The model that generates and refines plans
+   * - Prose writer model
+     - The model that writes and expands scene text
+   * - Passage
+     - Text the author selects in a scene (or the whole scene) to be expanded
+   * - LM Studio
+     - The local model server the application talks to
+<<<
+
+[TEXT]
+STATEMENT: >>>
+Each requirement has an ID of the form ``AREA-n`` (for example ``FR-PLN-3``), a priority and a status.
+<<<
+
+[TEXT]
+STATEMENT: >>>
+- **Must**: required for the product to be usable. **Should**: important, can follow later. **Could**: desirable.
+- **Implemented**: present and covered by tests unless noted. **Planned**: agreed direction, not built yet.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Product overview
+
+[TEXT]
+STATEMENT: >>>
+The author writes a synopsis, a local planner model turns it into a plan, the author refines the plan by editing it or chatting with the model, and the application builds the manuscript's acts, chapters and scenes from it. The author then writes each scene with its brief in view, either by hand or with the prose writer model: writing a whole scene from its brief, or expanding their own short draft into a longer passage in steps.
+<<<
+
+[TEXT]
+STATEMENT: >>>
+::
+
+   Synopsis --Generate Plan--> Plan <--edit / chat--> (refined plan) --Create Structure--> Acts / chapters / scenes
+                                                                                                 |
+                                                        Write Scene (from brief) / Expand (draft) v
+                                                                                            Scene text
+<<<
+
+[TEXT]
+STATEMENT: >>>
+Plans sit at the centre: each one is refined in a loop of edits and chat before Create Structure turns it into the manuscript.
+<<<
+
+[TEXT]
+STATEMENT: >>>
+**Users.** A single author working alone on one machine, who runs LM Studio locally (or on their own network) and owns the models it serves. No accounts, sharing or collaboration.
+<<<
+
+[TEXT]
+STATEMENT: >>>
+**Operating environment.**
+<<<
+
+[TEXT]
+STATEMENT: >>>
+.. list-table::
+   :header-rows: 1
+
+   * - Item
+     - Requirement
+   * - Operating systems
+     - Windows 10 and later (primary, tested); Linux and macOS (supported by the build, untested)
+   * - Toolkit
+     - Qt 6.8 LTS (Core, Gui, Widgets, Network), C++20
+   * - Storage
+     - RocksDB 11.1 with LZ4 compression, one database folder per novel
+   * - AI server
+     - LM Studio with its local server enabled, default ``http://127.0.0.1:1234``
+   * - Build
+     - Conan 2, CMake 3.23 or later, Ninja; MSVC 19.5 on Windows
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Functional requirements
+
+[TEXT]
+STATEMENT: >>>
+All functional requirements below are implemented; planned functions are listed under Open issues.
+<<<
+
+[[SECTION]]
+TITLE: Novels
+
+[REQUIREMENT]
+UID: FR-NOV-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The user can create a novel at a new ``*.novel`` path; an existing path is refused. A new novel starts with Act 1 / Chapter 1 / Scene 1.
+<<<
+
+[REQUIREMENT]
+UID: FR-NOV-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The user can open a novel by selecting its folder. A folder that is not a novel is refused without any file being written to it.
+<<<
+
+[REQUIREMENT]
+UID: FR-NOV-3
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+The last novel reopens on startup; a novel path given on the command line is opened instead.
+<<<
+
+[REQUIREMENT]
+UID: FR-NOV-4
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Only one application instance can open a novel at a time; a second attempt reports why it failed.
+<<<
+
+[REQUIREMENT]
+UID: FR-NOV-5
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Novels can live in folders with non-ASCII names on every platform.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Manuscript structure
+
+[REQUIREMENT]
+UID: FR-STR-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The Manuscript tab shows the novel as a tree of acts, chapters and scenes, acts in bold.
+<<<
+
+[REQUIREMENT]
+UID: FR-STR-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+**+ Act**, **+ Chapter** and **+ Scene** buttons above the tree add a node after the current one, creating missing parents (+ Scene on an empty act also adds a chapter).
+<<<
+
+[REQUIREMENT]
+UID: FR-STR-3
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+New nodes get default titles (Act N, Chapter N numbered through the book, Scene N); new acts and chapters open for renaming.
+<<<
+
+[REQUIREMENT]
+UID: FR-STR-4
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Nodes are renamed by double-click or F2; an empty name is rejected and the old one restored.
+<<<
+
+[REQUIREMENT]
+UID: FR-STR-5
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Delete (Del) asks for confirmation, stating how many chapters and scenes go with it, and removes everything below the node.
+<<<
+
+[REQUIREMENT]
+UID: FR-STR-6
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Nodes are reordered with Alt+Up/Down or by drag and drop; scenes move between chapters and chapters between acts; drops that break the hierarchy are refused.
+<<<
+
+[REQUIREMENT]
+UID: FR-STR-7
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Selecting an act, chapter or scene shows its brief above the editor.
+<<<
+
+[REQUIREMENT]
+UID: FR-STR-8
+PRIORITY: Could
+STATUS: Implemented
+STATEMENT: >>>
+The tree keeps each node's collapsed or expanded state while the novel is open.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Scene editing
+
+[REQUIREMENT]
+UID: FR-SCN-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Selecting a scene opens its text in a plain-text editor with live Markdown highlighting (headings, emphasis, code, quotes, lists, rules, links).
+<<<
+
+[REQUIREMENT]
+UID: FR-SCN-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Text saves automatically 1.5 s after typing stops, when switching scenes, and on exit; Ctrl+S saves at once.
+<<<
+
+[REQUIREMENT]
+UID: FR-SCN-3
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Text is stored exactly as shown in the editor, including non-breaking spaces.
+<<<
+
+[REQUIREMENT]
+UID: FR-SCN-4
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+Each scene has its own undo history.
+<<<
+
+[REQUIREMENT]
+UID: FR-SCN-5
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+The status bar shows word counts for the scene, its chapter and the novel, and whether the scene is saved.
+<<<
+
+[REQUIREMENT]
+UID: FR-SCN-6
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+Undo, Redo, Cut, Copy and Paste in the Edit menu act on whichever editor has focus, and do nothing in an editor that is locked while a model writes.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Prose writer
+
+[REQUIREMENT]
+UID: FR-PRS-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Above the scene editor, **Write Scene**, **Expand** and a **Length** choice (200, 500, 1000 or 2000 words) use the prose writer model from Settings. The length choice is remembered per user.
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+**Write Scene** writes the selected scene from its brief, or from its chapter's brief if the scene has none; with neither, the user is told to create the structure from a plan or to draft the scene and use Expand.
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-3
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Write Scene gives the model the synopsis, the act and chapter (titles and briefs), the scene's title and brief, the end of the nearest earlier scene that has text (up to 600 words), and the next scene's brief (or the next chapter's brief when the next scene starts a chapter and has none).
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-4
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+If the scene already has text, Write Scene asks before replacing it.
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-5
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+**Expand** rewrites the selected text, or the whole scene if nothing is selected, as a longer passage of the chosen length; whitespace around the selection is left in place. The button reads **Expand Selection** when text is selected.
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-6
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Expand gives the model the scene context of FR-PRS-3, up to 400 words before the passage, the passage, and only the opening of the text after it (whole sentences up to about 40 words), with the first following sentence named as the point to end before.
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-7
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+Expand refuses a passage that already has at least the chosen number of words.
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-8
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The model's text streams into the editor in place of the replaced text; the editor and the scene tree are locked while it writes, and **Stop** ends the request, keeping what was written.
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-9
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Each generation is one undo step: Undo brings back exactly the text from before.
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-10
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A request is ended once the text passes the chosen length by a quarter (at least 50 words); the text is cut at the end of the last whole sentence within that limit and the status says so.
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-11
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+When an expanded passage shares a run of five words with the text after it (checked against up to 300 following words), the request is ended and the passage is cut at the start of that sentence; a copy of the following text's first sentence at the very end is also removed. The whole answer is never removed.
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-12
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Wrappers models add around prose are removed: code fences, a leading "Here is..." line, a leading heading or bold title, and section tags copied from the prompt (a leading tag is removed; anything from a later tag is dropped).
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-13
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A failed request puts the original text back and shows the cause; an empty answer, or a length-limit stop before any text, is explained.
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-14
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Without a prose writer model or a valid server address, the user is offered the Settings dialog.
+<<<
+
+[REQUIREMENT]
+UID: FR-PRS-15
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Generated text is saved when the request ends, not while it streams; switching scenes or closing the application first stops the request, keeping what was written.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Synopsis
+
+[REQUIREMENT]
+UID: FR-SYN-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The Synopsis tab holds one synopsis per novel, saved automatically and byte for byte as written.
+<<<
+
+[REQUIREMENT]
+UID: FR-SYN-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A Planner model dropdown lists "Settings default" plus the server's models; a choice other than the default overrides Settings for this novel and is saved with it.
+<<<
+
+[REQUIREMENT]
+UID: FR-SYN-3
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+A status line names the model plans will be generated with and reports when the model list cannot be fetched.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Plans
+
+[REQUIREMENT]
+UID: FR-PLN-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A novel can hold any number of plans, listed on the Plan tab with their title and generating model, or "(by hand)".
+<<<
+
+[REQUIREMENT]
+UID: FR-PLN-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+**+ New Plan** adds an empty plan to write by hand; **Delete** removes one after confirmation; double-click renames.
+<<<
+
+[REQUIREMENT]
+UID: FR-PLN-3
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The selected plan opens in an editor with Markdown highlighting and saves automatically.
+<<<
+
+[REQUIREMENT]
+UID: FR-PLN-4
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Each generated plan records the model and the plan template that generated it; editing the plan by hand does not change that record.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Plan templates
+
+[REQUIREMENT]
+UID: FR-TPL-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The Synopsis tab offers a Plan template dropdown with a short description of the selected template; the choice is saved with the novel.
+<<<
+
+[REQUIREMENT]
+UID: FR-TPL-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+**Three acts (25/50/25)**, the default: a plot-driven plan in three acts of about 25/50/25% of the chapters, with inciting incident, first plot point, midpoint, crisis, climax and resolution placed in their acts.
+<<<
+
+[REQUIREMENT]
+UID: FR-TPL-3
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+**Inner stages across years**: a character-driven plan for a story spanning many years, built as the protagonist's progression through 5 to 8 named inner stages (in the manner of the stages of grief), each stage a part (``### Stage N``); every scene carries a concrete time marker instead of time-skip summaries, and the synopsis's ending is kept even when bleak or unresolved.
+<<<
+
+[REQUIREMENT]
+UID: FR-TPL-4
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Every template produces chapters and scenes in the same notation, so any plan can drive Create Structure and the plan chat.
+<<<
+
+[REQUIREMENT]
+UID: FR-TPL-5
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+Adding a template requires no change outside the template list and its prompt.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Plan generation
+
+[REQUIREMENT]
+UID: FR-GEN-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+**Generate Plan** sends the synopsis to the novel's planner model in the novel's plan template and always creates a new plan; existing plans are never replaced.
+<<<
+
+[REQUIREMENT]
+UID: FR-GEN-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The plan streams into the Plan tab as it is written, with a word count, and the Plan tab is brought forward.
+<<<
+
+[REQUIREMENT]
+UID: FR-GEN-3
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Reasoning ("thinking") output is never shown in or saved with a plan.
+<<<
+
+[REQUIREMENT]
+UID: FR-GEN-4
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+**Stop** ends generation and keeps the text written so far as the plan.
+<<<
+
+[REQUIREMENT]
+UID: FR-GEN-5
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A failed or empty generation adds no plan and shows the cause; a length-limit stop, including one spent entirely on reasoning, is explained with a remedy.
+<<<
+
+[REQUIREMENT]
+UID: FR-GEN-6
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Generation requires a synopsis and a planner model; without a model the user is offered the Settings dialog.
+<<<
+
+[REQUIREMENT]
+UID: FR-GEN-7
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+While a plan is generated, the plan list, plan editing and plan buttons are locked.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Plan chat
+
+[REQUIREMENT]
+UID: FR-CHT-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A chat box under the plan talks to the model that generated the selected plan, or to the novel's planner model for a hand-written plan; its header names the model.
+<<<
+
+[REQUIREMENT]
+UID: FR-CHT-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Every request includes the synopsis, the current plan with the author's edits, and the conversation so far.
+<<<
+
+[REQUIREMENT]
+UID: FR-CHT-3
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A reply containing a revised plan replaces the plan as one undoable edit; a reply without one leaves the plan unchanged.
+<<<
+
+[REQUIREMENT]
+UID: FR-CHT-4
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A revised plan that was cut off is never applied; one that looks partial (fewer acts, under half the chapters or length) is applied only after confirmation.
+<<<
+
+[REQUIREMENT]
+UID: FR-CHT-5
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+Each plan keeps its own conversation across sessions; **Clear** forgets it after confirmation.
+<<<
+
+[REQUIREMENT]
+UID: FR-CHT-6
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+Enter sends, Shift+Enter adds a line; **Stop** aborts and returns the message to the input; plan editing is locked while a reply is written.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Structure from a plan
+
+[REQUIREMENT]
+UID: FR-IMP-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+**Create Structure** builds acts, chapters and scenes from the selected plan's Structure section, without a model.
+<<<
+
+[REQUIREMENT]
+UID: FR-IMP-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Structure lines are recognised as headings, bold lines, list items or plain ``Chapter N: Title`` lines, including typographic spaces and hyphens; act-level parts may be named Act, Stage, Part or Book and keep that word in their title; no structure line is ever taken into a brief.
+<<<
+
+[REQUIREMENT]
+UID: FR-IMP-3
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Each act, chapter and scene receives its plan description as a brief; scene text starts empty.
+<<<
+
+[REQUIREMENT]
+UID: FR-IMP-4
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A new novel's untouched first scene is replaced silently; otherwise the user chooses to add after the manuscript or replace it, with a second confirmation stating the words that would be deleted.
+<<<
+
+[REQUIREMENT]
+UID: FR-IMP-5
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The structure is written in one atomic step; afterwards the Manuscript tab shows the first new scene. A plan with no structure produces an explanation and no change.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Settings and models
+
+[REQUIREMENT]
+UID: FR-SET-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Edit > Settings holds the LM Studio server address, default ``http://127.0.0.1:1234``; forms like ``127.0.0.1:1234`` or ``.../v1`` are accepted and invalid addresses are refused.
+<<<
+
+[REQUIREMENT]
+UID: FR-SET-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The dialog fetches the server's models when opened, when the address changes and on Refresh, leaving out embedding models and showing size, quantisation and loaded state.
+<<<
+
+[REQUIREMENT]
+UID: FR-SET-3
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Separate dropdowns choose the orchestrator/planner model and the prose writer model; a saved model missing from the server stays selected and is flagged.
+<<<
+
+[REQUIREMENT]
+UID: FR-SET-4
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Settings are stored per user, outside the novel.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Export
+
+[REQUIREMENT]
+UID: FR-EXP-1
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+**Export as Markdown** writes the whole manuscript to one ``.md`` file: acts as ``#`` headings, chapters as ``##``, scenes separated by ``* * *``.
+<<<
+
+[[/SECTION]]
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Data and storage
+
+[TEXT]
+STATEMENT: >>>
+A novel is one RocksDB database (format version 3) in which every scene's text is its own entry, so restructuring never rewrites prose.
+<<<
+
+[REQUIREMENT]
+UID: DAT-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Each scene's text is a separate entry (``scene/<id>/text``); acts and chapters store only a title, an optional brief and the ordered ids of their children.
+<<<
+
+[REQUIREMENT]
+UID: DAT-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Ids are unique across acts, chapters, scenes and plans and are never reused, even after deletion.
+<<<
+
+[REQUIREMENT]
+UID: DAT-3
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Every change that touches several entries (add, move, delete, structure import, format upgrade) is written atomically in one batch.
+<<<
+
+[REQUIREMENT]
+UID: DAT-4
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Every write is synced to disk before the application reports it saved.
+<<<
+
+[REQUIREMENT]
+UID: DAT-5
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The synopsis, plans and scene text are stored byte for byte as given (including CR/LF, tabs, no-break spaces and NUL).
+<<<
+
+[REQUIREMENT]
+UID: DAT-6
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Optional entries (synopsis, briefs, plan model override, plan template, plan chat) may be absent and read as empty, so adding them needs no format change.
+<<<
+
+[REQUIREMENT]
+UID: DAT-7
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A novel in format 2 (single ``novel/plan``) is upgraded to format 3 in one atomic write when opened; its plan becomes "Plan 1" with no recorded model. An unknown format version is refused, not guessed.
+<<<
+
+[REQUIREMENT]
+UID: DAT-8
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A deleted node or plan leaves no entries behind (title, text, brief, chat).
+<<<
+
+[REQUIREMENT]
+UID: DAT-9
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Application settings (server address, model choices, prose length, last novel) live in per-user settings, never in a novel.
+<<<
+
+[TEXT]
+STATEMENT: >>>
+.. list-table::
+   :header-rows: 1
+
+   * - Key
+     - Value
+   * - ``novel/format``, ``novel/next_id``
+     - format version, next unused id
+   * - ``novel/acts``; ``act/<id>/{title,chapters,brief}``
+     - act order; act title, chapter order, brief
+   * - ``chapter/<id>/{title,scenes,brief}``
+     - chapter title, scene order, brief
+   * - ``scene/<id>/{title,text,brief}``
+     - scene title, Markdown text, brief
+   * - ``novel/synopsis``, ``novel/plan_model``, ``novel/plan_template``
+     - synopsis; planner model override; plan template
+   * - ``novel/plans``; ``plan/<id>/{title,text,model,template,chat}``
+     - plan order; plan title, Markdown, generating model, template, conversation (JSON)
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: AI integration
+
+[TEXT]
+STATEMENT: >>>
+The application talks only to the LM Studio server the user configures, over its HTTP APIs, and treats model output as untrusted text to be checked before it changes the novel.
+<<<
+
+[REQUIREMENT]
+UID: AI-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Models are listed from ``GET /api/v1/models``, falling back to ``/api/v0/models`` and then the OpenAI-compatible ``/v1/models`` when the server answers 404; connection errors are reported without fallback.
+<<<
+
+[REQUIREMENT]
+UID: AI-2
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Listing times out after 5 s with a clear message.
+<<<
+
+[REQUIREMENT]
+UID: AI-3
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Generation, chat and prose writing use the OpenAI-compatible ``POST /v1/chat/completions`` with streaming (server-sent events).
+<<<
+
+[REQUIREMENT]
+UID: AI-4
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A streaming request fails only after 5 minutes without data, allowing for model loading.
+<<<
+
+[REQUIREMENT]
+UID: AI-5
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Reasoning is removed whether it arrives in a separate channel (``reasoning_content``) or inline as ``<think>...</think>``, including blocks split across chunks or opened by the chat template.
+<<<
+
+[REQUIREMENT]
+UID: AI-6
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Each plan template has its own prompt asking for a fixed Markdown shape: premise, characters and settings, a planning section written first (a story spine of turning points, or a stage progression), a Structure section of parts, ``#### Chapter`` and ``- **Scene N: Title**`` lines, and open questions. Every prompt demands faithfulness to the synopsis, no padding, and the synopsis's language.
+<<<
+
+[REQUIREMENT]
+UID: AI-7
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The chat prompt requires the complete revised plan between ``<plan>`` and ``</plan>`` for changes, keeping the plan's own part headings (acts or stages), and a plain answer for questions; the newest message carries a reminder to return the whole plan.
+<<<
+
+[REQUIREMENT]
+UID: AI-8
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+Earlier revised plans are not resent in chat history; the current plan in the system prompt replaces them.
+<<<
+
+[REQUIREMENT]
+UID: AI-9
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+A response stopped by the length limit is reported as truncated (``finish_reason: length``); errors inside the stream or in HTTP error bodies are shown to the user.
+<<<
+
+[REQUIREMENT]
+UID: AI-10
+PRIORITY: Could
+STATUS: Implemented
+STATEMENT: >>>
+Sampling temperature is 0.6 for plan generation, 0.5 for plan chat and 0.8 for prose writing.
+<<<
+
+[REQUIREMENT]
+UID: AI-11
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The prose prompts give each part of the context as its own tagged section (synopsis, act, chapter, scene, previous text, next scene brief; for Expand also text before, passage, text after) and leave out empty ones.
+<<<
+
+[REQUIREMENT]
+UID: AI-12
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The prose prompts require finished prose in the surrounding point of view, tense, voice and language; faithfulness to the brief and synopsis; following the instructions closely and stopping once they are covered, with no foreshadowing, summary, reflection or imagined ending beyond them; and plain text only (no Markdown, HTML, code blocks, title, introduction or notes).
+<<<
+
+[REQUIREMENT]
+UID: AI-13
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The prose prompts end with the length as a maximum, with a paragraph estimate. Write Scene may stop early once the scene is covered; Expand must keep every event of the passage in order, keep the author's dialogue, add detail rather than plot, and never continue past the passage.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Non-functional requirements
+
+[TEXT]
+STATEMENT: >>>
+The application must never lose or silently alter the author's text, must keep working when the model server is slow or wrong, and must build and run without special steps.
+<<<
+
+[REQUIREMENT]
+UID: NFR-1
+PRIORITY: Must
+STATUS: Implemented
+AREA: Reliability
+STATEMENT: >>>
+No user action or model reply discards saved text without an explicit confirmation or a single undo step bringing it back; destructive confirmations state what will be lost.
+<<<
+
+[REQUIREMENT]
+UID: NFR-2
+PRIORITY: Must
+STATUS: Implemented
+AREA: Reliability
+STATEMENT: >>>
+While a model is writing, the text it may replace is locked against edits.
+<<<
+
+[REQUIREMENT]
+UID: NFR-3
+PRIORITY: Must
+STATUS: Implemented
+AREA: Reliability
+STATEMENT: >>>
+A slow, unreachable or misbehaving server never blocks the UI; every request can be stopped, and a model that does not stop on its own is stopped by the application (FR-PRS-10).
+<<<
+
+[REQUIREMENT]
+UID: NFR-4
+PRIORITY: Must
+STATUS: Implemented
+AREA: Reliability
+STATEMENT: >>>
+Closing the application or switching novels saves pending edits and stops running requests (keeping partial plans and prose as Stop does).
+<<<
+
+[REQUIREMENT]
+UID: NFR-5
+PRIORITY: Must
+STATUS: Implemented
+AREA: Platforms
+STATEMENT: >>>
+The same code builds on Windows, Linux and macOS with Conan and CMake; Windows is the tested platform.
+<<<
+
+[REQUIREMENT]
+UID: NFR-6
+PRIORITY: Must
+STATUS: Implemented
+AREA: Deployment
+STATEMENT: >>>
+On Windows each build copies the Qt runtime next to the executable so it starts by double-click; ``cmake --install`` produces a self-contained folder including the MSVC runtime.
+<<<
+
+[REQUIREMENT]
+UID: NFR-7
+PRIORITY: Should
+STATUS: Implemented
+AREA: Build
+STATEMENT: >>>
+A project profile (``profiles/windows-msvc``) fixes compiler, C++20, Ninja and RocksDB's UTF-8 file names; the build has no compiler warnings at ``/W4``.
+<<<
+
+[REQUIREMENT]
+UID: NFR-8
+PRIORITY: Should
+STATUS: Implemented
+AREA: Performance
+STATEMENT: >>>
+Typing is never delayed by saving; saves happen at most every 1.5 s of idle time per editor. Streaming views refresh at most every 100 ms.
+<<<
+
+[REQUIREMENT]
+UID: NFR-9
+PRIORITY: Should
+STATUS: Implemented
+AREA: Usability
+STATEMENT: >>>
+All user-visible strings go through Qt translation (``tr``).
+<<<
+
+[REQUIREMENT]
+UID: NFR-10
+PRIORITY: Must
+STATUS: Implemented
+AREA: Privacy
+STATEMENT: >>>
+Novel text is sent only to the configured LM Studio server; the application has no telemetry and needs no account.
+<<<
+
+[REQUIREMENT]
+UID: NFR-11
+PRIORITY: Must
+STATUS: Implemented
+AREA: Testability
+STATEMENT: >>>
+Storage, model client, chat, plan parsing, prose prompts and the main window are covered by seven CTest suites that run without a real server (fake HTTP server) and without showing windows (Qt ``minimal`` platform).
+<<<
+
+[REQUIREMENT]
+UID: NFR-12
+PRIORITY: Should
+STATUS: Implemented
+AREA: Testability
+STATEMENT: >>>
+Optional live checks run the same code against a real LM Studio when environment variables are set, including prose length and repeat checks.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
+TITLE: Constraints, open issues and traceability
+
+[TEXT]
+STATEMENT: >>>
+**Constraints and assumptions.**
+<<<
+
+[TEXT]
+STATEMENT: >>>
+- One author per novel; RocksDB's lock makes concurrent access impossible by design.
+- LM Studio is installed and its server is running; the application does not start, load or unload models.
+- Plan quality depends on the chosen model. In testing, ``openai_gpt-oss-20b`` produced the best plans, and models with a context below 32k tokens could not hold a full plan.
+- Prose quality and length discipline depend on the chosen model; small models count words poorly and may not stop on their own, which FR-PRS-10 and FR-PRS-11 guard against.
+- Qt and RocksDB are built from source on first install, which can take an hour or more.
+<<<
+
+[TEXT]
+STATEMENT: >>>
+**Planned and open items.**
+<<<
+
+[REQUIREMENT]
+UID: PLN-1
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Prose writer: write a scene from its brief and the preceding text, and expand passages, with the prose writer model (FR-PRS).
+<<<
+
+[REQUIREMENT]
+UID: PLN-2
+PRIORITY: Should
+STATUS: Planned
+STATEMENT: >>>
+Edit briefs in the UI (the store already supports it); needed for Write Scene on scenes added by hand.
+<<<
+
+[REQUIREMENT]
+UID: PLN-3
+PRIORITY: Should
+STATUS: Planned
+STATEMENT: >>>
+Option to turn off or limit reasoning for reasoning models, which can exhaust their context before answering.
+<<<
+
+[REQUIREMENT]
+UID: PLN-4
+PRIORITY: Should
+STATUS: Planned
+STATEMENT: >>>
+Test on macOS and Linux, and package for Linux (e.g. AppImage).
+<<<
+
+[REQUIREMENT]
+UID: PLN-5
+PRIORITY: Could
+STATUS: Planned
+STATEMENT: >>>
+Renumber chapters after a model inserts one (models write "8.1" or "11A").
+<<<
+
+[REQUIREMENT]
+UID: PLN-6
+PRIORITY: Could
+STATUS: Planned
+STATEMENT: >>>
+Undo for Create Structure when it replaces the manuscript.
+<<<
+
+[REQUIREMENT]
+UID: PLN-7
+PRIORITY: Could
+STATUS: Planned
+STATEMENT: >>>
+Per-novel prose writer model override, like the planner model on the Synopsis tab.
+<<<
+
+[TEXT]
+STATEMENT: >>>
+**Traceability.**
+<<<
+
+[[/SECTION]]

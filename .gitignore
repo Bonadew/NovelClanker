@@ -7,3 +7,4 @@ compile_commands.json
 *.user
 build-conan.log
 dist/
+.venv/

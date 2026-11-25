@@ -64,6 +64,7 @@ std::string outline(const NovelStore &store)
     return out;
 }
 
+// @relation(DAT-1, DAT-2, DAT-3, scope=function)
 void testStructure(const fs::path &dir)
 {
     const std::string unicodeText = "Text with åäö and emoji \xF0\x9F\x93\x96.\n";
@@ -138,6 +139,7 @@ void testStructure(const fs::path &dir)
     EXPECT(!store.kindOf(s4) && !store.kindOf(c2));
 }
 
+// @relation(DAT-8, scope=function)
 void testRemovedEntriesAreGone(const fs::path &dir)
 {
     // After deleting everything and reopening, the novel must load cleanly (no dangling references).
@@ -153,6 +155,7 @@ void testRemovedEntriesAreGone(const fs::path &dir)
     EXPECT(outline(store) == "Act[]");
 }
 
+// @relation(FR-SYN-1, DAT-5, DAT-6, scope=function)
 void testSynopsis(const fs::path &dir)
 {
     // Stored byte-for-byte: CRLF, tabs, trailing/leading whitespace, non-breaking spaces, emoji, NUL.
@@ -178,6 +181,7 @@ std::string planOutline(const NovelStore &store)
     return out;
 }
 
+// @relation(FR-PLN-1, FR-PLN-4, DAT-2, scope=function)
 void testPlans(const fs::path &dir)
 {
     Id byHand = 0, generated = 0, second = 0;
@@ -213,6 +217,7 @@ void testPlans(const fs::path &dir)
     EXPECT(planOutline(store) == "Three acts[qwen/qwen3.5-9b] Plan 3[other-model] New[hand]");
 }
 
+// @relation(FR-IMP-3, FR-IMP-5, DAT-3, scope=function)
 void testBriefsAndImport(const fs::path &dir)
 {
     using NA = NovelStore::NewAct;
@@ -263,6 +268,7 @@ void testBriefsAndImport(const fs::path &dir)
     EXPECT(store.acts().empty());
 }
 
+// @relation(FR-TPL-1, FR-PLN-4, DAT-6, scope=function)
 void testPlanTemplates(const fs::path &dir)
 {
     Id staged = 0, hand = 0;
@@ -287,6 +293,7 @@ void testPlanTemplates(const fs::path &dir)
     EXPECT(store.plans().size() == 1 && store.plans()[0].id == hand);
 }
 
+// @relation(FR-CHT-5, DAT-6, scope=function)
 void testPlanChat(const fs::path &dir)
 {
     Id plan = 0, other = 0;
@@ -311,6 +318,7 @@ void testPlanChat(const fs::path &dir)
     }
 }
 
+// @relation(FR-SYN-2, DAT-6, scope=function)
 void testPlanModelOverride(const fs::path &dir)
 {
     {
@@ -355,6 +363,7 @@ void writeFormat2Novel(const fs::path &dir, const std::string &plan)
     db->Close();
 }
 
+// @relation(DAT-7, scope=function)
 void testUpgradeFromFormat2(const fs::path &root)
 {
     {
@@ -382,6 +391,7 @@ void testUpgradeFromFormat2(const fs::path &root)
     }
 }
 
+// @relation(FR-NOV-1, FR-NOV-2, scope=function)
 void testErrors(const fs::path &root)
 {
     const fs::path existing = root / "existing.novel";
