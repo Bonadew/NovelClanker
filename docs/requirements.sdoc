@@ -460,6 +460,59 @@ Generated text is saved when the request ends, not while it streams; switching s
 [[/SECTION]]
 
 [[SECTION]]
+TITLE: Spelling
+
+[REQUIREMENT]
+UID: FR-SPL-1
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+Spell checking uses Hunspell with the US English and UK English dictionaries shipped with the application (from LibreOffice's dictionaries; their licenses are shipped too). More languages can be added by putting a ``<code>.dic`` / ``<code>.aff`` pair into the user's dictionary folder (**Edit > Spelling > Open Dictionary Folder**). Dictionaries in folders with non-ASCII names work.
+<<<
+
+[REQUIREMENT]
+UID: FR-SPL-2
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+Words are runs of letters with apostrophes inside them ("don't", "Elin's"); curly apostrophes count as straight ones, the possessive "'s" of a known word is accepted, and letters joined to digits or ``_`` are not checked.
+<<<
+
+[REQUIREMENT]
+UID: FR-SPL-3
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+**Add to Dictionary** puts a word into the user's personal dictionary, used for every language and novel and kept between sessions; **Ignore All** accepts a word until the program ends.
+<<<
+
+[REQUIREMENT]
+UID: FR-SPL-4
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+Misspelled words are underlined with a wavy line in the scene, synopsis and plan editors, in a colour readable in light and dark mode. Code (fenced blocks and code spans), link targets, URLs, e-mail addresses and tags are not checked.
+<<<
+
+[REQUIREMENT]
+UID: FR-SPL-5
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+Right-clicking a misspelled word offers up to 7 suggestions (replacing the word as one undo step; disabled while a model writes into the editor), **Add to Dictionary** and **Ignore All**, above the usual editing commands.
+<<<
+
+[REQUIREMENT]
+UID: FR-SPL-6
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+**Edit > Spelling** turns checking on or off (saved per user) and chooses the dictionary. The dictionary is saved with the novel; a novel without a choice uses the last one chosen, else UK English where the computer's region is the UK, Ireland, Australia or New Zealand, and US English otherwise.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
 TITLE: Synopsis
 
 [REQUIREMENT]
@@ -730,6 +783,35 @@ The structure is written in one atomic step; afterwards the Manuscript tab shows
 [[/SECTION]]
 
 [[SECTION]]
+TITLE: Book details
+
+[REQUIREMENT]
+UID: FR-BOOK-1
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+**File > Novel Setup** edits the novel's book details for publishing, the fields Amazon KDP asks for when publishing an eBook: title, subtitle, series name and number, edition, language, primary author, contributors with their roles, description, up to 7 keywords, publishing rights (own copyright or public domain), whether it has sexually explicit content, reading age, up to 3 categories, publisher and ISBN. They are saved in the novel. A new novel opens the window right away, with the title suggested from its file name.
+<<<
+
+[REQUIREMENT]
+UID: FR-BOOK-2
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+The window marks the details KDP requires (title, author, language, publishing rights, the sexually explicit content answer, a category) and lists, as they are edited, what is missing and what breaks KDP's rules: title and subtitle fewer than 200 characters together, a description of at most 4000 characters, series number and edition as digits only, a series number only with a series name, no HTML in titles, names or keywords, all contributors for a public domain work, a reading age range in order, and a well-formed ISBN. Saving is always possible, so details can be filled in over time. It notes that language, title, subtitle, edition and primary author can't be changed on KDP after publishing.
+<<<
+
+[REQUIREMENT]
+UID: FR-BOOK-3
+PRIORITY: Could
+STATUS: Implemented
+STATEMENT: >>>
+The window title shows the book's title when one is set, else the novel's file name.
+<<<
+
+[[/SECTION]]
+
+[[SECTION]]
 TITLE: Settings and models
 
 [REQUIREMENT]
@@ -828,14 +910,62 @@ The text size is saved per user and applied at startup.
 [[/SECTION]]
 
 [[SECTION]]
-TITLE: Export
+TITLE: Markdown export and import
 
 [REQUIREMENT]
 UID: FR-EXP-1
 PRIORITY: Should
 STATUS: Implemented
 STATEMENT: >>>
-**Export as Markdown** writes the whole manuscript to one ``.md`` file: acts as ``#`` headings, chapters as ``##``, scenes separated by ``* * *``.
+**Export as Markdown** writes the whole manuscript to one ``.md`` file: acts as ``#`` headings, chapters as ``##``, scenes separated by ``* * *``. Each act, chapter and scene is preceded by an HTML comment that Markdown viewers don't show (``<!-- act -->``, ``<!-- chapter -->``, ``<!-- scene: Title -->``), so the structure and scene titles can be rebuilt on import.
+<<<
+
+[REQUIREMENT]
+UID: FR-EXP-2
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+**Export as EPUB** writes the manuscript as an EPUB 3 eBook: a title page (title, subtitle, series, author), one page per chapter headed by its title with a scene break between scenes, a part page for each act when the novel has more than one act, and a table of contents (chapters under their acts). The book gets a permanent identifier on its first export, kept with its details, so later exports are recognised as the same book. If the title, author or language is not set, the user is offered Novel Setup first.
+<<<
+
+[REQUIREMENT]
+UID: FR-EXP-3
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+The EPUB's metadata comes from the book details: title and subtitle, author and contributors (with MARC relator roles), language as a BCP 47 code (``und`` if unknown), publisher, description, keywords as subjects, series with its number, and the ISBN. Without a title, the novel's file name is used.
+<<<
+
+[REQUIREMENT]
+UID: FR-EXP-4
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The EPUB is a valid container: ``mimetype`` is the first entry and stored uncompressed, all documents are well-formed XML (XHTML), and every file in the manifest is in the archive. Scene Markdown becomes XHTML; HTML written in a scene is shown as text, never interpreted.
+<<<
+
+[REQUIREMENT]
+UID: FR-IMP-6
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+**Import from Markdown** creates a new novel from a Markdown file. From a NovelClanker export, all acts, chapters and scenes come back with their titles, order and text (only trailing blank lines of a scene are dropped); headings and ``* * *`` lines inside a scene's text stay part of the scene. Briefs, the synopsis and plans are not part of an export and start empty.
+<<<
+
+[REQUIREMENT]
+UID: FR-IMP-7
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+Markdown without NovelClanker's comments (an older export, or written by hand) is read by its headings: ``#`` starts an act, ``##`` a chapter, and a scene-break line (``* * *``, ``***``, ``---``) a new scene, named "Scene N". Text before the first heading goes into "Act 1" / "Chapter 1". Windows line ends and a UTF-8 byte order mark are accepted.
+<<<
+
+[REQUIREMENT]
+UID: FR-IMP-8
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+The imported novel is written completely in one atomic step before it is opened; if that fails, nothing is left at the chosen location. An existing folder is never used, and a file without any text is refused.
 <<<
 
 [[/SECTION]]
@@ -919,7 +1049,15 @@ UID: DAT-9
 PRIORITY: Must
 STATUS: Implemented
 STATEMENT: >>>
-Application settings (server address, model choices, prose length, theme, text size, last novel) live in per-user settings, never in a novel.
+Application settings (server address, model choices, prose length, theme, text size, spell checking on/off and default dictionary, last novel) live in per-user settings, never in a novel.
+<<<
+
+[REQUIREMENT]
+UID: DAT-11
+PRIORITY: Must
+STATUS: Implemented
+STATEMENT: >>>
+Book details are optional entries ``novel/details/<name>`` (lower-case letters, digits and ``_``), stored byte for byte and written together in one atomic batch; an empty value removes the entry. New detail names need no format change.
 <<<
 
 [TEXT]

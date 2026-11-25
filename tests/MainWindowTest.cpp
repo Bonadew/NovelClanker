@@ -4,6 +4,8 @@
 #include "AiSettings.h"
 #include "FakeLmServer.h"
 #include "MainWindow.h"
+#include "NovelMarkdown.h"
+#include "NovelSetupDialog.h"
 #include "NovelStore.h"
 #include "PlanChat.h"
 #include "Theme.h"
@@ -13,8 +15,11 @@
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRadioButton>
+#include <QTableWidget>
 #include <QSettings>
 #include <QStyle>
 #include <QStyleHints>
@@ -23,12 +28,17 @@
 #include <QTabWidget>
 #include <QTextCursor>
 #include <QTextBrowser>
+#include <QFile>
 #include <QTest>
+#include <QTimer>
+#include <QStandardPaths>
+#include <QMenu>
 #include <QTreeWidget>
 
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 
 namespace fs = std::filesystem;
 
@@ -805,6 +815,284 @@ void testTextSize(const fs::path &dir)
     EXPECT(QSettings().value("appearance/textSize").toInt() == 12);
 }
 
+// A novel exported as Markdown comes back as a new novel with the same structure and text, without briefs.
+// @relation(FR-IMP-6, FR-IMP-8, scope=function)
+void testImportMarkdown(const fs::path &dir)
+{
+    const fs::path original = dir / "original.novel";
+    const fs::path markdown = dir / "export.md";
+    {
+        NovelStore store(original, NovelStore::Mode::Create);
+        const NovelStore::Id chapter = store.addChapter(store.addAct(0, "Act 1"), 0, "Chapter 1");
+        const NovelStore::Id arrival = store.addScene(chapter, 0, "Arrival", "The ferry was late.\n\n# Not an act");
+        store.setBrief(arrival, "POV: Elin.");
+        store.addScene(chapter, 1, "Departure", "She left at dawn.");
+        std::ofstream(markdown, std::ios::binary) << NovelMarkdown::write(store);
+    }
+    const fs::path imported = dir / "imported.novel";
+    {
+        MainWindow w; // destroyed at the end of this block, releasing the novel's lock
+        EXPECT(w.importMarkdown(toQ(markdown), toQ(imported)));
+        EXPECT(w.windowTitle().startsWith("imported"));
+        auto *tree = w.findChild<QTreeWidget *>("manuscriptTree");
+        EXPECT(treeOutline(tree) == "Act 1[Chapter 1(Arrival,Departure)]");
+        tree->setCurrentItem(tree->topLevelItem(0)->child(0)->child(0));
+        EXPECT(w.findChild<QPlainTextEdit *>("sceneEdit")->toPlainText() == "The ferry was late.\n\n# Not an act");
+        EXPECT(w.findChild<QLabel *>("briefLabel")->isHidden()); // briefs aren't part of the export
+        w.close();
+    }
+    NovelStore store(imported, NovelStore::Mode::Open);
+    EXPECT(store.sceneText(store.acts()[0].chapters[0].scenes[1].id) == "She left at dawn.");
+}
+
+// Novel Setup: book details for publishing, checked against Amazon KDP's rules and saved in the novel.
+// @relation(FR-BOOK-1, FR-BOOK-2, FR-BOOK-3, scope=function)
+void testNovelSetup(const fs::path &dir)
+{
+    {
+        NovelStore store(dir, NovelStore::Mode::Create);
+        NovelSetupDialog dialog(store, "Untitled");
+        const auto edit = [&](const char *name) { return dialog.findChild<QLineEdit *>(QString("detail_") + name); };
+        auto *checks = dialog.findChild<QLabel *>("setupChecks");
+        EXPECT(edit("title") && edit("author") && checks);
+        EXPECT(edit("title")->text() == "Untitled"); // suggested from the file name
+        EXPECT(checks->text().contains("Needed to publish on KDP") && checks->text().contains("author") &&
+               checks->text().contains("language") && checks->text().contains("category"));
+
+        edit("title")->setText("The Map Room");
+        edit("author")->setText("E. Lindqvist");
+        edit("series_name")->setText("Harbour Lights");
+        edit("series_number")->setText("Book 2"); // KDP wants digits only
+        EXPECT(checks->text().contains("digits only"));
+        edit("series_number")->setText("2");
+        dialog.findChild<QComboBox *>("detail_language")->setCurrentText("English");
+        dialog.findChild<QRadioButton *>("detail_rights_own")->setChecked(true);
+        dialog.findChild<QRadioButton *>("detail_explicit_no")->setChecked(true);
+        edit("category1")->setText("Fiction > Literary");
+        edit("keyword1")->setText("old maps");
+        edit("keyword3")->setText("harbour town"); // gaps between keywords are closed up
+        dialog.findChild<QPlainTextEdit *>("detail_description")->setPlainText("A cartographer loses a street.");
+        EXPECT(dialog.findChild<QLabel *>("descriptionCount")->text() == "30 / 4000 characters");
+        dialog.findChild<QPushButton *>("addContributorButton")->click();
+        dialog.findChild<QTableWidget *>("detail_contributors")->item(0, 1)->setText("A. Editor");
+        EXPECT(checks->text() == "Everything KDP asks for is filled in.");
+        dialog.accept();
+
+        EXPECT(store.detail("title") == "The Map Room" && store.detail("series_number") == "2");
+        EXPECT(store.detail("keywords") == "old maps\nharbour town");
+        EXPECT(store.detail("contributors") == "Author\tA. Editor");
+        EXPECT(store.detail("rights") == "own" && store.detail("explicit") == "no");
+        EXPECT(store.detail("subtitle").empty() && store.detail("isbn").empty());
+
+        NovelSetupDialog reopened(store, "Untitled"); // loads what was saved
+        std::map<std::string, std::string> shown;
+        for (const auto &[name, value] : reopened.values()) {
+            if (!value.empty()) {
+                shown[name] = value;
+            }
+        }
+        EXPECT(shown == store.details());
+        EXPECT(reopened.findChild<QTableWidget *>("detail_contributors")->rowCount() == 1);
+        EXPECT(reopened.findChild<QLineEdit *>("detail_keyword2")->text() == "harbour town");
+    }
+
+    // KDP's rules.
+    std::map<std::string, std::string> ok{{"title", "T"},     {"author", "A"},   {"language", "English"},
+                                          {"rights", "own"},  {"explicit", "no"}, {"categories", "Fiction"}};
+    EXPECT(NovelSetupDialog::problems(ok).isEmpty());
+    const auto problem = [&](const char *name, const std::string &value, const char *expected) {
+        auto values = ok;
+        values[name] = value;
+        const QString found = NovelSetupDialog::problems(values).join('\n');
+        expect(found.contains(expected), (std::string(name) + " -> " + expected).c_str(), __LINE__);
+    };
+    problem("subtitle", std::string(199, 'x'), "fewer than 200");
+    problem("description", std::string(4001, 'x'), "up to 4000");
+    problem("edition", "second", "edition must be a number");
+    problem("title", "<b>Bold</b>", "HTML");
+    problem("isbn", "123", "13 digits");
+    problem("series_number", "3", "needs the series' name");
+    problem("rights", "public_domain", "all of its contributors");
+    {
+        auto values = ok;
+        values["reading_age_min"] = "12";
+        values["reading_age_max"] = "9";
+        EXPECT(NovelSetupDialog::problems(values).join('\n').contains("above the oldest"));
+    }
+    {
+        auto values = ok;
+        values["reading_age_min"] = "8";
+        values["reading_age_max"] = "18+";
+        values["isbn"] = "978-0-306-40615-7";
+        EXPECT(NovelSetupDialog::problems(values).isEmpty());
+    }
+
+    // The window title shows the book's title.
+    MainWindow w;
+    EXPECT(w.openNovel(toQ(dir), NovelStore::Mode::Open));
+    EXPECT(w.windowTitle() == "The Map Room - NovelClanker");
+    EXPECT(w.findChild<QAction *>("novelSetupAction")->isEnabled());
+
+    // EPUB export: a ZIP file, and the book keeps its identifier across exports.
+    EXPECT(w.findChild<QAction *>("exportEpubAction")->isEnabled());
+    const fs::path epub = dir.parent_path() / "setup.epub";
+    EXPECT(w.exportEpub(toQ(epub)));
+    std::ifstream file(epub, std::ios::binary);
+    std::string start(4, '\0');
+    file.read(start.data(), 4);
+    EXPECT(start == std::string("PK\x03\x04", 4));
+    w.close();
+}
+
+// Underlined stretches of text in an editor's block, e.g. "mapp Lindqvist".
+QString underlinedIn(const QPlainTextEdit *edit, int blockNumber = 0)
+{
+    const QTextBlock block = edit->document()->findBlockByNumber(blockNumber);
+    QList<bool> marked(block.text().size(), false);
+    for (const auto &range : block.layout()->formats()) {
+        if (range.format.underlineStyle() == QTextCharFormat::SpellCheckUnderline) {
+            for (int i = range.start; i < range.start + range.length && i < marked.size(); ++i) {
+                marked[i] = true;
+            }
+        }
+    }
+    QStringList out;
+    for (qsizetype i = 0; i < marked.size(); ++i) {
+        if (marked[i] && (i == 0 || !marked[i - 1])) {
+            out << QString();
+        }
+        if (marked[i]) {
+            out.last() += block.text()[i];
+        }
+    }
+    return out.join(' ');
+}
+
+// Right-clicks `word` in `edit` and triggers the context menu entry whose text starts with `entry`. Returns the
+// entries that were offered (before the usual editing commands).
+QStringList rightClick(QPlainTextEdit *edit, const QString &word, const QString &entry)
+{
+    QTextCursor cursor(edit->document());
+    cursor.setPosition(static_cast<int>(edit->toPlainText().indexOf(word)) + 1);
+    const QPoint pos = edit->cursorRect(cursor).center();
+    QStringList offered;
+    QTimer::singleShot(0, [&] {
+        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!menu) {
+            return;
+        }
+        // Spelling entries come first: suggestions, a separator, Add / Ignore, a separator, then the usual ones.
+        for (QAction *action : menu->actions()) {
+            if (action->text().startsWith("&Undo")) {
+                break; // the usual editing commands
+            }
+            if (action->isSeparator()) {
+                offered << QStringLiteral("|");
+            } else {
+                offered << action->text();
+            }
+        }
+        QAction *chosen = nullptr;
+        for (QAction *action : menu->actions()) {
+            if (!chosen && !entry.isEmpty() && action->text().startsWith(entry)) {
+                chosen = action;
+            }
+        }
+        menu->close();
+        if (chosen) {
+            chosen->trigger();
+        }
+    });
+    emit edit->customContextMenuRequested(pos);
+    return offered;
+}
+
+// @relation(FR-SPL-4, FR-SPL-5, FR-SPL-6, scope=function)
+void testSpelling(const fs::path &dir)
+{
+    MainWindow w;
+    EXPECT(w.openNovel(toQ(dir), NovelStore::Mode::Create));
+    w.resize(1000, 700);
+    w.show();
+    auto *scene = w.findChild<QPlainTextEdit *>("sceneEdit");
+    auto *us = w.findChild<QAction *>("dictionary_en_US");
+    auto *uk = w.findChild<QAction *>("dictionary_en_GB");
+    auto *check = w.findChild<QAction *>("checkSpellingAction");
+    EXPECT(us && uk && check && check->isChecked());
+    us->trigger();
+    scene->setPlainText("The mapp of Lindqvist's colour harbor.");
+    EXPECT(underlinedIn(scene) == "mapp Lindqvist's colour");
+
+    // Right-click: suggestions first; choosing one replaces the word as one undo step.
+    const QStringList offered = rightClick(scene, "mapp", "map");
+    const qsizetype firstBreak = offered.indexOf("|");
+    EXPECT(offered.value(0) == "map" || offered.mid(0, firstBreak).contains("map"));
+    EXPECT(firstBreak >= 1 && firstBreak <= 7); // up to 7 suggestions
+    EXPECT(offered.contains("Add \"mapp\" to Dictionary") && offered.contains("Ignore All"));
+    EXPECT(scene->toPlainText() == "The map of Lindqvist's colour harbor.");
+    scene->undo();
+    EXPECT(scene->toPlainText() == "The mapp of Lindqvist's colour harbor.");
+    scene->redo();
+
+    rightClick(scene, "Lindqvist", "Add \"Lindqvist\""); // the name, not its possessive
+    EXPECT(underlinedIn(scene) == "colour"); // the personal dictionary knows the name now
+    rightClick(scene, "colour", "Ignore All");
+    EXPECT(underlinedIn(scene).isEmpty());
+
+    // The dictionary is chosen per novel.
+    uk->trigger();
+    EXPECT(underlinedIn(scene) == "harbor");
+    check->setChecked(false); // off: nothing underlined, and no spelling entries in the menu
+    EXPECT(underlinedIn(scene).isEmpty());
+    EXPECT(!rightClick(scene, "harbor", QString()).contains("Ignore All"));
+    check->setChecked(true);
+    EXPECT(underlinedIn(scene) == "harbor");
+
+    // The synopsis is checked too (as plain text).
+    auto *synopsis = w.findChild<QPlainTextEdit *>("synopsisEdit");
+    synopsis->setPlainText("A cartographr loses a street.");
+    EXPECT(underlinedIn(synopsis) == "cartographr");
+    w.close();
+}
+
+// @relation(FR-SPL-6, scope=function)
+void testSpellingDictionaryIsSavedWithNovel(const fs::path &dir)
+{
+    {
+        NovelStore store(dir, NovelStore::Mode::Open);
+        EXPECT(store.detail("spelling_dictionary") == "en_GB");
+    }
+    QSettings().setValue("spelling/dictionary", "en_US"); // another novel chose US English since
+    MainWindow w;
+    EXPECT(w.openNovel(toQ(dir), NovelStore::Mode::Open));
+    EXPECT(w.findChild<QAction *>("dictionary_en_GB")->isChecked()); // this novel keeps UK English
+}
+
+// @relation(FR-EXP-2, scope=function)
+void testEpubIdentifierIsKept(const fs::path &dir)
+{
+    std::string first;
+    {
+        MainWindow w;
+        EXPECT(w.openNovel(toQ(dir), NovelStore::Mode::Open));
+        EXPECT(w.exportEpub(toQ(dir.parent_path() / "again.epub")));
+        w.close();
+    }
+    {
+        NovelStore store(dir, NovelStore::Mode::Open);
+        first = store.detail("epub_identifier");
+    }
+    EXPECT(first.rfind("urn:uuid:", 0) == 0);
+    {
+        MainWindow w;
+        EXPECT(w.openNovel(toQ(dir), NovelStore::Mode::Open));
+        EXPECT(w.exportEpub(toQ(dir.parent_path() / "again.epub")));
+        w.close();
+    }
+    NovelStore store(dir, NovelStore::Mode::Open);
+    EXPECT(store.detail("epub_identifier") == first);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -813,6 +1101,8 @@ int main(int argc, char **argv)
     QApplication::setOrganizationName("NovelClankerTests");
     QApplication::setApplicationName("MainWindowTest");
     QSettings().clear();
+    QStandardPaths::setTestModeEnabled(true); // the personal dictionary goes to a test folder
+    QFile::remove(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/personal-dictionary.txt");
     if (argc != 2) {
         std::fprintf(stderr, "usage: %s <scratch-dir>\n", argv[0]);
         return 2;
@@ -833,6 +1123,12 @@ int main(int argc, char **argv)
     testProseWriter(root / "prose.novel");
     testTheme(root / "theme.novel");
     testTextSize(root / "textsize.novel");
+    fs::create_directories(root / "import");
+    testImportMarkdown(root / "import");
+    testNovelSetup(root / "setup.novel");
+    testEpubIdentifierIsKept(root / "setup.novel");
+    testSpelling(root / "spelling.novel");
+    testSpellingDictionaryIsSavedWithNovel(root / "spelling.novel");
 
     QSettings().clear();
     if (g_failures == 0) {

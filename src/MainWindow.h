@@ -3,6 +3,7 @@
 #include "LmStudioClient.h"
 #include "NovelStore.h"
 #include "ProsePrompt.h"
+#include "SpellChecker.h"
 
 #include <QMainWindow>
 #include <QPointer>
@@ -13,6 +14,9 @@
 #include <unordered_set>
 
 class QAction;
+class QActionGroup;
+class QMenu;
+class QPoint;
 class QComboBox;
 class QLabel;
 class QPlainTextEdit;
@@ -37,6 +41,15 @@ class MainWindow : public QMainWindow
     // Opens the novel at `dir`; returns false (after telling the user) on failure.
     bool openNovel(const QString &dir, NovelStore::Mode mode);
 
+    // Creates a new novel at `novelDir` from the Markdown file `markdownFile` (an export, or written by hand),
+    // rebuilding acts, chapters and scenes with their text, and opens it. Returns false (after telling the user)
+    // on failure; nothing is left behind at `novelDir` then.
+    bool importMarkdown(const QString &markdownFile, const QString &novelDir);
+
+    // Writes the open novel as an EPUB eBook to `path`, with the book details from Novel Setup. Returns false
+    // (after telling the user) on failure.
+    bool exportEpub(const QString &path);
+
   protected:
     void closeEvent(QCloseEvent *event) override;
 
@@ -47,6 +60,9 @@ class MainWindow : public QMainWindow
     void newNovel();
     void openNovelDialog();
     void exportMarkdown();
+    void exportEpubDialog();
+    void openNovelSetup(); // File > Novel Setup: title, author and other book details
+    void importMarkdownDialog();
 
     // Structure editing
     void addAct();
@@ -127,6 +143,13 @@ class MainWindow : public QMainWindow
     void setTextSize(int points, bool remember = true);
     void changeTextSize(int steps); // +1 larger, -1 smaller
 
+    // Spelling (Edit > Spelling): the dictionary is saved with the novel; misspellings are underlined in the
+    // scene, synopsis and plan editors, whose context menus offer suggestions, Add to Dictionary and Ignore All.
+    QString spellingDictionaryCode() const; // this novel's dictionary, else the last chosen, else by region
+    void chooseDictionary(const QString &code);
+    void applySpelling();
+    void showEditorMenu(QPlainTextEdit *edit, MarkdownHighlighter *highlighter, const QPoint &pos);
+
     // Tree and status
     void rebuildTree(std::optional<Id> select);
     QTreeWidgetItem *findItem(Id id) const;
@@ -148,6 +171,11 @@ class MainWindow : public QMainWindow
     QLabel *m_briefLabel = nullptr; // brief of the selected act/chapter/scene
     MarkdownHighlighter *m_highlighter = nullptr;
     MarkdownHighlighter *m_planHighlighter = nullptr;
+    MarkdownHighlighter *m_synopsisHighlighter = nullptr;
+    std::unique_ptr<SpellChecker> m_spell = std::make_unique<SpellChecker>();
+    QMenu *m_spellingMenu = nullptr;
+    QAction *m_checkSpellingAction = nullptr;
+    QActionGroup *m_dictionaryGroup = nullptr;
     int m_textSize = 0; // points, for the scene, synopsis and plan editors
     QTimer *m_autosaveTimer = nullptr;
 
@@ -204,6 +232,8 @@ class MainWindow : public QMainWindow
 
     QAction *m_saveAction = nullptr;
     QAction *m_exportAction = nullptr;
+    QAction *m_exportEpubAction = nullptr;
+    QAction *m_setupAction = nullptr;
     QAction *m_addActAction = nullptr;
     QAction *m_addChapterAction = nullptr;
     QAction *m_addSceneAction = nullptr;

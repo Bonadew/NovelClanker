@@ -36,7 +36,7 @@ if not "%CONAN_HOME%"=="%CONAN_HOME: =%" (
 )
 
 rem The executable can't be replaced while it runs.
-tasklist /fi "imagename eq NovelClanker.exe" 2>nul | find /i "NovelClanker.exe" >nul && (
+tasklist /fi "imagename eq NovelClanker.exe" 2>nul | "%SystemRoot%\System32\find.exe" /i "NovelClanker.exe" >nul && (
     echo ERROR: NovelClanker is running. Close it and run build.bat again.
     goto :fail
 )
@@ -95,5 +95,5 @@ exit /b 1
 
 rem Keep the window open when build.bat was started from Explorer, so the result can be read.
 :pause_if_double_clicked
-echo %CMDCMDLINE% | find /i "%~nx0" >nul && echo %CMDCMDLINE% | find /i "/c" >nul && pause
+echo %CMDCMDLINE% | "%SystemRoot%\System32\find.exe" /i "%~nx0" >nul && echo %CMDCMDLINE% | "%SystemRoot%\System32\find.exe" /i "/c" >nul && pause
 exit /b 0

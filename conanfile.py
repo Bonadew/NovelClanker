@@ -50,6 +50,12 @@ class NovelClankerConan(ConanFile):
     def requirements(self):
         self.requires("qt/6.8.5")
         self.requires("rocksdb/11.1.1")
+        # EPUB export: Markdown -> XHTML (md4c, the same library Qt uses for Markdown) and ZIP compression (zlib).
+        # Ranges, so the versions Qt already requires are used.
+        self.requires("md4c/[>=0.4.8 <1]")
+        self.requires("zlib/[>=1.2.11 <2]")
+        # Spell checking in the editors (dictionaries are in dictionaries/).
+        self.requires("hunspell/1.7.2")
 
     def layout(self):
         cmake_layout(self)
@@ -98,6 +104,9 @@ class NovelClankerConan(ConanFile):
             f"version ({self.dependencies['qt'].ref.version}). Qt's source code is available from:",
             "https://download.qt.io/archive/qt/",
             "The other libraries are built into NovelClanker or into Qt's libraries.",
+            "",
+            "The spelling dictionaries in dictionaries/ come from LibreOffice's dictionaries: US English",
+            "(SCOWL, BSD-style license) and UK English (GNU LGPL). Their licenses are in licenses/dictionaries/.",
             "",
         ]
         for dep in rows:

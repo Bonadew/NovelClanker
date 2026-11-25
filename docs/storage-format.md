@@ -28,6 +28,31 @@ children, so restructuring never rewrites scene text. Ids are unique across all 
 | `plan/<id>/model`     | generating model; absent if by hand     |
 | `plan/<id>/template`  | template it was generated with (optional) |
 | `plan/<id>/chat`      | conversation about the plan (JSON)      |
+| `novel/details/<name>` | book detail from Novel Setup (optional) |
+
+Book details (`novel/details/<name>`, all optional, written together in one batch):
+
+| Name              | Value                                                                         |
+|-------------------|-------------------------------------------------------------------------------|
+| `title`           | book title                                                                    |
+| `subtitle`        | subtitle                                                                      |
+| `series_name`     | series name                                                                   |
+| `series_number`   | number in the series (digits)                                                 |
+| `edition`         | edition number (digits)                                                       |
+| `language`        | language, e.g. `English`                                                      |
+| `author`          | primary author                                                                |
+| `contributors`    | one per line: role and name, separated by a tab               |
+| `description`     | description for the book's page                                               |
+| `keywords`        | one per line, up to 7                                                         |
+| `categories`      | one per line, up to 3                                                         |
+| `publisher`       | publisher                                                                     |
+| `isbn`            | ISBN                                                                          |
+| `rights`          | `own` (own copyright) or `public_domain`                                      |
+| `explicit`        | sexually explicit content: `yes` or `no`                                      |
+| `reading_age_min` | youngest reading age: `0` (baby) to `18`                                      |
+| `reading_age_max` | oldest reading age: `1` to `17`, or `18+`                                     |
+| `epub_identifier` | the book's identifier for EPUB exports (`urn:uuid:...`), set on first export  |
+| `spelling_dictionary` | the dictionary to spell check with, e.g. `en_GB` (Edit > Spelling)        |
 
 Format 1 is the only format. A novel with any other format version is refused when opened, and left
 unchanged.

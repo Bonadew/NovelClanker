@@ -5,6 +5,10 @@
 #include "LmStudioClient.h"
 #include "MarkdownHighlighter.h"
 #include "ModelCombo.h"
+#include "Epub.h"
+#include "SpellChecker.h"
+#include "NovelMarkdown.h"
+#include "NovelSetupDialog.h"
 #include "NovelTree.h"
 #include "PlanChat.h"
 #include "PlanChatPanel.h"
@@ -24,7 +28,13 @@
 #include <QTabWidget>
 #include <QTextCursor>
 #include <QCloseEvent>
+#include <QDesktopServices>
 #include <QDir>
+#include <QLocale>
+#include <QMenu>
+#include <QTextBlock>
+#include <QUrl>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMenuBar>
@@ -54,6 +64,8 @@ constexpr int kAutosaveDelayMs = 1500;
 constexpr std::array kTextSizes{8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 24, 28, 32, 36, 40, 48};
 constexpr int kDefaultTextSize = 12;
 constexpr auto kTextSizeKey = "appearance/textSize";
+constexpr auto kSpellingEnabledKey = "spelling/enabled";
+constexpr auto kSpellingDictionaryKey = "spelling/dictionary";
 constexpr auto kLastNovelKey = "lastNovel";
 constexpr int kIdRole = Qt::UserRole;
 
@@ -270,7 +282,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     fileMenu->addAction(tr("&New Novel..."), this, &MainWindow::newNovel);
     fileMenu->addAction(tr("&Open Novel..."), QKeySequence::Open, this, &MainWindow::openNovelDialog);
     m_saveAction = fileMenu->addAction(tr("&Save"), QKeySequence::Save, this, &MainWindow::saveCurrentScene);
+    fileMenu->addAction(tr("&Import from Markdown..."), this, &MainWindow::importMarkdownDialog);
     m_exportAction = fileMenu->addAction(tr("&Export as Markdown..."), this, &MainWindow::exportMarkdown);
+    m_exportEpubAction = fileMenu->addAction(tr("Export as E&PUB..."), this, &MainWindow::exportEpubDialog);
+    m_exportEpubAction->setObjectName("exportEpubAction");
+    fileMenu->addSeparator();
+    m_setupAction = fileMenu->addAction(tr("Novel Se&tup..."), this, &MainWindow::openNovelSetup);
+    m_setupAction->setObjectName("novelSetupAction");
     fileMenu->addSeparator();
     fileMenu->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
 
@@ -292,6 +310,37 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     QAction *settingsAction =
         editMenu->addAction(tr("&Settings..."), QKeySequence::Preferences, this, &MainWindow::openSettings);
     settingsAction->setMenuRole(QAction::PreferencesRole); // macOS: app menu "Settings..."
+
+    // Edit > Spelling: on/off and the dictionary (saved with the novel).
+    editMenu->addSeparator();
+    m_spellingMenu = editMenu->addMenu(tr("S&pelling"));
+    m_checkSpellingAction = m_spellingMenu->addAction(tr("&Check Spelling"));
+    m_checkSpellingAction->setObjectName("checkSpellingAction");
+    m_checkSpellingAction->setCheckable(true);
+    m_checkSpellingAction->setChecked(QSettings().value(kSpellingEnabledKey, true).toBool());
+    connect(m_checkSpellingAction, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue(kSpellingEnabledKey, on);
+        applySpelling();
+    });
+    m_spellingMenu->addSeparator();
+    m_dictionaryGroup = new QActionGroup(this);
+    for (const SpellChecker::Dictionary &dictionary : SpellChecker::available()) {
+        QAction *action = m_spellingMenu->addAction(dictionary.name);
+        action->setObjectName("dictionary_" + dictionary.code);
+        action->setCheckable(true);
+        action->setData(dictionary.code);
+        m_dictionaryGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, code = dictionary.code] { chooseDictionary(code); });
+    }
+    if (m_dictionaryGroup->actions().isEmpty()) {
+        m_spellingMenu->addAction(tr("No dictionaries found"))->setEnabled(false);
+    }
+    m_spellingMenu->addSeparator();
+    m_spellingMenu->addAction(tr("Open Dictionary Folder..."), this, [] {
+        // More languages: put <code>.dic / <code>.aff files here (e.g. from LibreOffice's dictionaries).
+        QDir().mkpath(SpellChecker::userDictionaryFolder());
+        QDesktopServices::openUrl(QUrl::fromLocalFile(SpellChecker::userDictionaryFolder()));
+    });
 
     QMenu *structureMenu = menuBar()->addMenu(tr("&Structure"));
     structureMenu->addAction(m_addActAction);
@@ -376,6 +425,146 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     loadSynopsisAndPlan();
     updateTitle();
     setTextSize(QSettings().value(kTextSizeKey, kDefaultTextSize).toInt(), false);
+
+    // Spell checking in all writing editors; the synopsis is plain text (no Markdown styling).
+    m_synopsisHighlighter = new MarkdownHighlighter(m_synopsisEdit->document(), false);
+    const std::pair<QPlainTextEdit *, MarkdownHighlighter *> checked[] = {
+        {m_editor, m_highlighter}, {m_synopsisEdit, m_synopsisHighlighter}, {m_planEdit, m_planHighlighter}};
+    for (const auto &[edit, highlighter] : checked) {
+        edit->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(edit, &QWidget::customContextMenuRequested, this,
+                [this, edit, highlighter](const QPoint &pos) { showEditorMenu(edit, highlighter, pos); });
+    }
+    applySpelling();
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Spelling
+// ---------------------------------------------------------------------------------------------------
+
+QString MainWindow::spellingDictionaryCode() const
+{
+    QStringList codes;
+    for (const QAction *action : m_dictionaryGroup->actions()) {
+        codes << action->data().toString();
+    }
+    if (codes.isEmpty()) {
+        return {};
+    }
+    // This novel's choice, else the last one chosen, else by the computer's region.
+    QString code;
+    if (m_store) {
+        try {
+            code = QString::fromStdString(m_store->detail("spelling_dictionary"));
+        } catch (const std::exception &) {
+        }
+    }
+    if (!codes.contains(code)) {
+        code = QSettings().value(kSpellingDictionaryKey).toString();
+    }
+    if (!codes.contains(code)) {
+        const auto territory = QLocale::system().territory();
+        const bool british = territory == QLocale::UnitedKingdom || territory == QLocale::Ireland ||
+                             territory == QLocale::Australia || territory == QLocale::NewZealand;
+        code = british && codes.contains("en_GB") ? "en_GB" : codes.contains("en_US") ? "en_US" : codes.first();
+    }
+    return code;
+}
+
+void MainWindow::chooseDictionary(const QString &code)
+{
+    QSettings().setValue(kSpellingDictionaryKey, code); // the default for novels without a choice
+    if (m_store) {
+        attempt(tr("Could not save the spelling language."),
+                [&] { m_store->setDetails({{"spelling_dictionary", code.toStdString()}}); });
+    }
+    applySpelling();
+}
+
+void MainWindow::applySpelling()
+{
+    const QString code = spellingDictionaryCode();
+    for (QAction *action : m_dictionaryGroup->actions()) {
+        action->setChecked(action->data().toString() == code);
+    }
+    const bool on = m_checkSpellingAction->isChecked() && !code.isEmpty();
+    if (on && m_spell->code() != code) {
+        const auto dictionaries = SpellChecker::available();
+        const auto it = std::find_if(dictionaries.begin(), dictionaries.end(),
+                                     [&](const SpellChecker::Dictionary &d) { return d.code == code; });
+        if (it == dictionaries.end() || !m_spell->load(*it)) {
+            statusBar()->showMessage(tr("Could not load the %1 dictionary.").arg(code), 4000);
+        }
+    }
+    for (MarkdownHighlighter *highlighter : {m_highlighter, m_synopsisHighlighter, m_planHighlighter}) {
+        if (highlighter) {
+            highlighter->setSpellChecker(on && m_spell->isLoaded() ? m_spell.get() : nullptr);
+        }
+    }
+}
+
+void MainWindow::showEditorMenu(QPlainTextEdit *edit, MarkdownHighlighter *highlighter, const QPoint &pos)
+{
+    QMenu *menu = edit->createStandardContextMenu(pos);
+    menu->setObjectName("editorMenu");
+    const QTextCursor cursor = edit->cursorForPosition(pos);
+    const QTextBlock block = cursor.block();
+    if (const auto word = highlighter->misspelledWordAt(block, cursor.positionInBlock())) {
+        const QString text = block.text().mid(word->start, word->length);
+        const int start = block.position() + static_cast<int>(word->start);
+        const int length = static_cast<int>(word->length);
+        QAction *before = menu->actions().value(0);
+        const QStringList suggestions = m_spell->suggestions(text);
+        for (const QString &suggestion : suggestions) {
+            auto *action = new QAction(suggestion, menu);
+            QFont bold = action->font();
+            bold.setBold(true);
+            action->setFont(bold);
+            action->setEnabled(!edit->isReadOnly());
+            connect(action, &QAction::triggered, edit, [edit, start, length, suggestion] {
+                QTextCursor replace(edit->document());
+                replace.setPosition(start);
+                replace.setPosition(start + length, QTextCursor::KeepAnchor);
+                replace.insertText(suggestion); // one undo step
+            });
+            menu->insertAction(before, action);
+        }
+        if (suggestions.isEmpty()) {
+            auto *none = new QAction(tr("(No suggestions)"), menu);
+            none->setEnabled(false);
+            menu->insertAction(before, none);
+        }
+        menu->insertSeparator(before);
+        // "Lindqvist's": add the name itself; its possessive is then correct too.
+        QString toAdd = text;
+        for (const QString &possessive : {QStringLiteral("'s"), QStringLiteral("’s")}) {
+            if (text.endsWith(possessive, Qt::CaseInsensitive) && text.size() > 2 &&
+                !m_spell->isCorrect(text.chopped(2))) {
+                toAdd = text.chopped(2);
+            }
+        }
+        auto *add = new QAction(tr("Add \"%1\" to Dictionary").arg(toAdd), menu);
+        add->setObjectName("addToDictionaryAction");
+        connect(add, &QAction::triggered, this, [this, toAdd] {
+            m_spell->addToPersonalDictionary(toAdd);
+            for (MarkdownHighlighter *h : {m_highlighter, m_synopsisHighlighter, m_planHighlighter}) {
+                h->refreshSpelling();
+            }
+        });
+        auto *ignore = new QAction(tr("Ignore All"), menu);
+        ignore->setObjectName("ignoreSpellingAction");
+        connect(ignore, &QAction::triggered, this, [this, text] {
+            m_spell->ignore(text);
+            for (MarkdownHighlighter *h : {m_highlighter, m_synopsisHighlighter, m_planHighlighter}) {
+                h->refreshSpelling();
+            }
+        });
+        menu->insertAction(before, add);
+        menu->insertAction(before, ignore);
+        menu->insertSeparator(before);
+    }
+    menu->exec(edit->viewport()->mapToGlobal(pos));
+    delete menu;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -467,6 +656,7 @@ bool MainWindow::openNovel(const QString &dir, NovelStore::Mode mode)
     rebuildTree(firstScene);
     loadSynopsisAndPlan();
     updateTitle();
+    applySpelling(); // this novel's dictionary
     return true;
 }
 
@@ -497,7 +687,9 @@ void MainWindow::newNovel()
         QMessageBox::warning(this, tr("New Novel"), tr("%1 already exists. Choose a new name.").arg(dir));
         return;
     }
-    openNovel(dir, NovelStore::Mode::Create);
+    if (openNovel(dir, NovelStore::Mode::Create)) {
+        openNovelSetup(); // title, author, ... right away (can be skipped and filled in later)
+    }
 }
 
 void MainWindow::openNovelDialog()
@@ -508,6 +700,141 @@ void MainWindow::openNovelDialog()
     if (!dir.isEmpty()) {
         openNovel(dir, NovelStore::Mode::Open);
     }
+}
+
+void MainWindow::importMarkdownDialog()
+{
+    const QString docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString source = QFileDialog::getOpenFileName(this, tr("Import from Markdown"), docs,
+                                                        tr("Markdown (*.md *.markdown *.txt);;All files (*)"));
+    if (source.isEmpty()) {
+        return;
+    }
+    const QString suggested = QFileInfo(source).absolutePath() + "/" + QFileInfo(source).completeBaseName() + ".novel";
+    const QString dir = QFileDialog::getSaveFileName(this, tr("New Novel from Markdown"), suggested,
+                                                     tr("NovelClanker novel (*.novel)"), nullptr,
+                                                     QFileDialog::DontConfirmOverwrite);
+    if (dir.isEmpty()) {
+        return;
+    }
+    if (QFileInfo::exists(dir)) {
+        QMessageBox::warning(this, tr("Import from Markdown"), tr("%1 already exists. Choose a new name.").arg(dir));
+        return;
+    }
+    importMarkdown(source, dir);
+}
+
+bool MainWindow::importMarkdown(const QString &markdownFile, const QString &novelDir)
+{
+    const QString title = tr("Import from Markdown");
+    QFile file(markdownFile);
+    if (!file.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, title, tr("Could not read %1:\n\n%2").arg(markdownFile, file.errorString()));
+        return false;
+    }
+    const QByteArray bytes = file.readAll();
+    const std::vector<NovelStore::NewAct> acts =
+        NovelMarkdown::read(std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
+    if (acts.empty()) {
+        QMessageBox::information(this, title, tr("%1 contains no text to import.").arg(markdownFile));
+        return false;
+    }
+    if (QFileInfo::exists(novelDir)) {
+        QMessageBox::warning(this, title, tr("%1 already exists. Choose a new name.").arg(novelDir));
+        return false;
+    }
+    // Written completely before it is opened; removed again if that fails, so no half-imported novel remains.
+    const bool written = attempt(tr("Could not create the novel."), [&] {
+        NovelStore store(toPath(novelDir), NovelStore::Mode::Create);
+        store.importStructure(acts, false); // a new store is empty
+    });
+    if (!written) {
+        std::error_code ignored;
+        std::filesystem::remove_all(toPath(novelDir), ignored);
+        return false;
+    }
+    if (!openNovel(novelDir, NovelStore::Mode::Open)) {
+        return false;
+    }
+    std::size_t chapters = 0, scenes = 0;
+    for (const auto &act : acts) {
+        chapters += act.chapters.size();
+        for (const auto &chapter : act.chapters) {
+            scenes += chapter.scenes.size();
+        }
+    }
+    statusBar()->showMessage(tr("Imported %1 act(s), %2 chapter(s) and %3 scene(s) from %4")
+                                 .arg(acts.size())
+                                 .arg(chapters)
+                                 .arg(scenes)
+                                 .arg(QDir::toNativeSeparators(markdownFile)),
+                             6000);
+    return true;
+}
+
+void MainWindow::exportEpubDialog()
+{
+    if (!m_store || !saveCurrentScene()) {
+        return;
+    }
+    // An eBook needs at least a title, an author and a language: offer to fill them in first.
+    QStringList missing;
+    attempt(tr("Could not read the novel's details."), [&] {
+        if (m_store->detail("title").empty()) {
+            missing << tr("title");
+        }
+        if (m_store->detail("author").empty()) {
+            missing << tr("author");
+        }
+        if (m_store->detail("language").empty()) {
+            missing << tr("language");
+        }
+    });
+    if (!missing.isEmpty()) {
+        QMessageBox box(QMessageBox::Question, tr("Export as EPUB"),
+                        tr("The book has no %1 yet. Fill them in under Novel Setup first?")
+                            .arg(missing.join(QStringLiteral(", "))),
+                        QMessageBox::NoButton, this);
+        QPushButton *setup = box.addButton(tr("Novel Setup..."), QMessageBox::AcceptRole);
+        QPushButton *anyway = box.addButton(tr("Export Anyway"), QMessageBox::DestructiveRole);
+        box.addButton(QMessageBox::Cancel);
+        box.exec();
+        if (box.clickedButton() == setup) {
+            openNovelSetup();
+            return;
+        }
+        if (box.clickedButton() != anyway) {
+            return;
+        }
+    }
+    const QString base = QFileInfo(fromPath(m_store->path())).completeBaseName();
+    const QString path = QFileDialog::getSaveFileName(this, tr("Export as EPUB"), base + ".epub", tr("EPUB (*.epub)"));
+    if (!path.isEmpty()) {
+        exportEpub(path);
+    }
+}
+
+bool MainWindow::exportEpub(const QString &path)
+{
+    if (!m_store || !saveCurrentScene()) {
+        return false;
+    }
+    return attempt(tr("Could not export the novel as EPUB."), [&] {
+        // The book keeps one identifier across exports, so readers and stores see new versions as the same book.
+        std::string identifier = m_store->detail("epub_identifier");
+        if (identifier.empty()) {
+            identifier = Epub::newIdentifier();
+            m_store->setDetails({{"epub_identifier", identifier}});
+        }
+        const std::string epub =
+            Epub::write(*m_store, {QFileInfo(fromPath(m_store->path())).completeBaseName().toStdString(), identifier, {}});
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(epub.data(), static_cast<qint64>(epub.size())) < 0 ||
+            !file.commit()) {
+            throw std::runtime_error(file.errorString().toStdString());
+        }
+        statusBar()->showMessage(tr("Exported to %1").arg(QDir::toNativeSeparators(path)), 4000);
+    });
 }
 
 void MainWindow::exportMarkdown()
@@ -522,24 +849,7 @@ void MainWindow::exportMarkdown()
         return;
     }
     attempt(tr("Could not export the novel."), [&] {
-        // Acts and chapters become headings; scenes are separated by a scene break.
-        std::string out;
-        for (const auto &act : m_store->acts()) {
-            out += "# " + act.title + "\n\n";
-            for (const auto &chapter : act.chapters) {
-                out += "## " + chapter.title + "\n\n";
-                for (std::size_t s = 0; s < chapter.scenes.size(); ++s) {
-                    std::string text = m_store->sceneText(chapter.scenes[s].id);
-                    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
-                        text.pop_back();
-                    }
-                    if (s > 0) {
-                        out += "* * *\n\n";
-                    }
-                    out += text + "\n\n";
-                }
-            }
-        }
+        const std::string out = NovelMarkdown::write(*m_store);
         QSaveFile file(path);
         if (!file.open(QIODevice::WriteOnly) || file.write(out.data(), static_cast<qint64>(out.size())) < 0 ||
             !file.commit()) {
@@ -1998,7 +2308,7 @@ void MainWindow::createStructureFromPlan()
         for (const PlanStructure::Chapter &chapter : act.chapters) {
             NovelStore::NewChapter newChapter{chapter.title.toStdString(), chapter.brief.toStdString(), {}};
             for (const PlanStructure::Scene &scene : chapter.scenes) {
-                newChapter.scenes.push_back({scene.title.toStdString(), scene.brief.toStdString()});
+                newChapter.scenes.push_back({scene.title.toStdString(), scene.brief.toStdString(), {}});
             }
             newAct.chapters.push_back(std::move(newChapter));
         }
@@ -2258,6 +2568,8 @@ void MainWindow::updateActions()
     QTreeWidgetItem *item = m_tree->currentItem();
     m_saveAction->setEnabled(haveNovel);
     m_exportAction->setEnabled(haveNovel);
+    m_exportEpubAction->setEnabled(haveNovel);
+    m_setupAction->setEnabled(haveNovel);
     m_addActAction->setEnabled(haveNovel);
     m_addChapterAction->setEnabled(haveNovel);
     m_addSceneAction->setEnabled(haveNovel);
@@ -2301,6 +2613,27 @@ void MainWindow::updateStatus()
 
 void MainWindow::updateTitle()
 {
-    setWindowTitle(m_store ? QFileInfo(fromPath(m_store->path())).completeBaseName() + " - NovelClanker"
-                           : QStringLiteral("NovelClanker"));
+    if (!m_store) {
+        setWindowTitle(QStringLiteral("NovelClanker"));
+        return;
+    }
+    // The book's title from Novel Setup, else the novel's file name.
+    QString title = QFileInfo(fromPath(m_store->path())).completeBaseName();
+    attempt(tr("Could not read the novel's details."), [&] {
+        if (const std::string stored = m_store->detail("title"); !stored.empty()) {
+            title = QString::fromStdString(stored);
+        }
+    });
+    setWindowTitle(title + " - NovelClanker");
+}
+
+void MainWindow::openNovelSetup()
+{
+    if (!m_store) {
+        return;
+    }
+    NovelSetupDialog dialog(*m_store, QFileInfo(fromPath(m_store->path())).completeBaseName(), this);
+    if (dialog.exec() == QDialog::Accepted) {
+        updateTitle();
+    }
 }

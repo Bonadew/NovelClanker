@@ -5,6 +5,9 @@
 #include <QApplication>
 #include <QEvent>
 #include <QFontDatabase>
+#include <QTextBlock>
+
+#include <algorithm>
 
 namespace {
 // Indexes into m_inlineRules for the rules whose colour depends on the theme.
@@ -12,7 +15,8 @@ constexpr std::size_t kCodeRule = 3;
 constexpr std::size_t kLinkRule = 4;
 } // namespace
 
-MarkdownHighlighter::MarkdownHighlighter(QTextDocument *parent) : QSyntaxHighlighter(parent)
+MarkdownHighlighter::MarkdownHighlighter(QTextDocument *parent, bool markdown)
+    : QSyntaxHighlighter(parent), m_markdown(markdown)
 {
     for (QTextCharFormat &format : m_headingFormats) {
         format.setFontWeight(QFont::Bold);
@@ -77,6 +81,8 @@ void MarkdownHighlighter::updateColors()
     m_ruleFormat.setForeground(rule);
     m_inlineRules[kCodeRule].format.setForeground(code);
     m_inlineRules[kLinkRule].format.setForeground(link);
+    m_misspelledFormat.setUnderlineStyle(QTextCharFormat::SpellCheckUnderline);
+    m_misspelledFormat.setUnderlineColor(dark ? QColor(0xff, 0x6b, 0x6b) : QColor(0xd0, 0x10, 0x10));
 }
 
 bool MarkdownHighlighter::eventFilter(QObject *watched, QEvent *event)
@@ -91,24 +97,40 @@ bool MarkdownHighlighter::eventFilter(QObject *watched, QEvent *event)
 void MarkdownHighlighter::highlightBlock(const QString &text)
 {
     static const QRegularExpression fence(R"(^\s*(```|~~~))");
+
+    if (m_markdown) {
+        // Fenced code blocks span multiple lines; track them via block state. Code isn't spell checked.
+        const bool fenceLine = fence.match(text).hasMatch();
+        if (previousBlockState() == InCodeFence) {
+            setFormat(0, text.length(), m_codeFormat);
+            setCurrentBlockState(fenceLine ? Normal : InCodeFence);
+            return;
+        }
+        if (fenceLine) {
+            setFormat(0, text.length(), m_codeFormat);
+            setCurrentBlockState(InCodeFence);
+            return;
+        }
+        setCurrentBlockState(Normal);
+        highlightMarkdown(text);
+    }
+
+    // Misspelled words: a wavy underline on top of whatever style the word has.
+    for (const SpellChecker::Word &word : misspelledWords(text)) {
+        for (qsizetype i = word.start; i < word.start + word.length; ++i) {
+            QTextCharFormat f = format(static_cast<int>(i));
+            f.merge(m_misspelledFormat);
+            setFormat(static_cast<int>(i), 1, f);
+        }
+    }
+}
+
+void MarkdownHighlighter::highlightMarkdown(const QString &text)
+{
     static const QRegularExpression heading(R"(^(#{1,6})\s)");
     static const QRegularExpression quote(R"(^\s*>)");
     static const QRegularExpression list(R"(^\s*([-*+]|\d+[.)])\s)");
     static const QRegularExpression hrule(R"(^\s*([-*_])(\s*\1){2,}\s*$)");
-
-    // Fenced code blocks span multiple lines; track them via block state.
-    const bool fenceLine = fence.match(text).hasMatch();
-    if (previousBlockState() == InCodeFence) {
-        setFormat(0, text.length(), m_codeFormat);
-        setCurrentBlockState(fenceLine ? Normal : InCodeFence);
-        return;
-    }
-    if (fenceLine) {
-        setFormat(0, text.length(), m_codeFormat);
-        setCurrentBlockState(InCodeFence);
-        return;
-    }
-    setCurrentBlockState(Normal);
 
     if (auto m = heading.match(text); m.hasMatch()) {
         setFormat(0, text.length(), m_headingFormats[m.capturedLength(1) - 1]);
@@ -137,4 +159,56 @@ void MarkdownHighlighter::highlightBlock(const QString &text)
             }
         }
     }
+}
+
+QList<SpellChecker::Word> MarkdownHighlighter::misspelledWords(const QString &text) const
+{
+    QList<SpellChecker::Word> out;
+    if (!m_spell || !m_spell->isLoaded()) {
+        return out;
+    }
+    // Text that isn't prose: URLs and e-mail addresses, and in Markdown also code spans, link targets and tags.
+    static const QRegularExpression plainSkip(QStringLiteral(R"((?:https?://|www\.)\S+|\S+@\S+\.\S+)"));
+    static const QRegularExpression markdownSkip(
+        QStringLiteral(R"(`[^`]*`|\]\([^)]*\)|<[^>\s][^>]*>|(?:https?://|www\.)\S+|\S+@\S+\.\S+)"));
+    QList<QPair<qsizetype, qsizetype>> skipped;
+    for (auto it = (m_markdown ? markdownSkip : plainSkip).globalMatch(text); it.hasNext();) {
+        const auto m = it.next();
+        skipped.append({m.capturedStart(), m.capturedEnd()});
+    }
+    for (const SpellChecker::Word &word : SpellChecker::words(text)) {
+        const bool inSkipped = std::any_of(skipped.begin(), skipped.end(), [&](const auto &range) {
+            return word.start < range.second && word.start + word.length > range.first;
+        });
+        if (!inSkipped && !m_spell->isCorrect(text.mid(word.start, word.length))) {
+            out.append(word);
+        }
+    }
+    return out;
+}
+
+void MarkdownHighlighter::setSpellChecker(const SpellChecker *checker)
+{
+    m_spell = checker;
+    rehighlight();
+}
+
+void MarkdownHighlighter::refreshSpelling()
+{
+    rehighlight();
+}
+
+std::optional<SpellChecker::Word> MarkdownHighlighter::misspelledWordAt(const QTextBlock &block,
+                                                                         qsizetype position) const
+{
+    if (!block.isValid() || (m_markdown && block.userState() == InCodeFence) ||
+        (m_markdown && block.previous().isValid() && block.previous().userState() == InCodeFence)) {
+        return std::nullopt; // code (a fence line, or inside a fenced block)
+    }
+    for (const SpellChecker::Word &word : misspelledWords(block.text())) {
+        if (position >= word.start && position <= word.start + word.length) {
+            return word;
+        }
+    }
+    return std::nullopt;
 }

@@ -9,6 +9,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Widgets)
 find_package(RocksDB REQUIRED)
+find_package(md4c REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(hunspell REQUIRED)
 
 function(novelclanker_warnings target)
     if(MSVC)
@@ -22,6 +25,8 @@ endfunction()
 add_library(novelstore STATIC
     src/NovelStore.cpp
     src/NovelStore.h
+    src/NovelMarkdown.cpp
+    src/NovelMarkdown.h
 )
 target_include_directories(novelstore PUBLIC src)
 target_link_libraries(novelstore PRIVATE RocksDB::rocksdb)
@@ -29,6 +34,17 @@ novelclanker_warnings(novelstore)
 
 # AI integration (LM Studio client, chat completions, prompts, AI settings). Qt Core/Network only, so it can be
 # tested without widgets.
+# EPUB export (no Qt): Markdown -> XHTML with md4c, ZIP with zlib.
+add_library(novelepub STATIC
+    src/Epub.cpp
+    src/Epub.h
+    src/ZipWriter.cpp
+    src/ZipWriter.h
+)
+target_include_directories(novelepub PUBLIC src)
+target_link_libraries(novelepub PUBLIC novelstore PRIVATE md4c::md4c-html ZLIB::ZLIB)
+novelclanker_warnings(novelepub)
+
 add_library(novelai STATIC
     src/AiSettings.cpp
     src/AiSettings.h
@@ -44,9 +60,11 @@ add_library(novelai STATIC
     src/PlanPrompt.h
     src/ProsePrompt.cpp
     src/ProsePrompt.h
+    src/SpellChecker.cpp
+    src/SpellChecker.h
 )
 target_include_directories(novelai PUBLIC src)
-target_link_libraries(novelai PUBLIC Qt6::Core Qt6::Network)
+target_link_libraries(novelai PUBLIC Qt6::Core Qt6::Network PRIVATE hunspell::hunspell)
 set_target_properties(novelai PROPERTIES AUTOMOC ON)
 novelclanker_warnings(novelai)
 
@@ -58,6 +76,8 @@ add_library(novelui STATIC
     src/MarkdownHighlighter.h
     src/ModelCombo.cpp
     src/ModelCombo.h
+    src/NovelSetupDialog.cpp
+    src/NovelSetupDialog.h
     src/NovelTree.cpp
     src/NovelTree.h
     src/PlanChatPanel.cpp
@@ -67,7 +87,7 @@ add_library(novelui STATIC
     src/Theme.cpp
     src/Theme.h
 )
-target_link_libraries(novelui PUBLIC novelstore novelai Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(novelui PUBLIC novelstore novelepub novelai Qt6::Core Qt6::Gui Qt6::Widgets)
 set_target_properties(novelui PROPERTIES AUTOMOC ON)
 novelclanker_warnings(novelui)
 
@@ -113,6 +133,24 @@ install(TARGETS novelclanker
 # Licenses: NovelClanker's own (GPL-3.0-or-later), a notice naming the bundled libraries and where their sources
 # are, and each library's license files (collected by conanfile.py into generators/licenses/<library>/).
 install(FILES LICENSE DESTINATION . RENAME LICENSE.txt)
+
+# Spelling dictionaries: next to the program after each build (so it finds them when run from the build folder),
+# and in the installed folder; their licenses go with the other licenses.
+file(GLOB _dictionaries "${CMAKE_CURRENT_SOURCE_DIR}/dictionaries/*.dic" "${CMAKE_CURRENT_SOURCE_DIR}/dictionaries/*.aff")
+add_custom_command(TARGET novelclanker POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:novelclanker>/dictionaries"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${_dictionaries} "$<TARGET_FILE_DIR:novelclanker>/dictionaries"
+    COMMENT "Copying spelling dictionaries"
+    VERBATIM)
+if(APPLE)
+    set(_dictionary_destination "NovelClanker.app/Contents/MacOS/dictionaries")
+else()
+    set(_dictionary_destination dictionaries)
+endif()
+install(FILES ${_dictionaries} DESTINATION "${_dictionary_destination}")
+install(FILES dictionaries/README_en_US.txt dictionaries/README_en_GB.txt dictionaries/LGPL-3.0.txt
+              dictionaries/SOURCE.md
+        DESTINATION licenses/dictionaries)
 install(FILES "${CMAKE_BINARY_DIR}/generators/THIRD-PARTY-NOTICES.txt" DESTINATION . OPTIONAL)
 if(EXISTS "${CMAKE_BINARY_DIR}/generators/licenses")
     install(DIRECTORY "${CMAKE_BINARY_DIR}/generators/licenses/" DESTINATION licenses)
@@ -204,9 +242,37 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     add_executable(novelstore_test tests/NovelStoreTest.cpp)
-    target_link_libraries(novelstore_test PRIVATE novelstore RocksDB::rocksdb) # RocksDB: writes old formats
+    target_link_libraries(novelstore_test PRIVATE novelstore RocksDB::rocksdb) # RocksDB: writes other format versions
     novelclanker_warnings(novelstore_test)
     add_test(NAME novelstore COMMAND novelstore_test "${CMAKE_CURRENT_BINARY_DIR}/test-data")
+
+    add_executable(novelmarkdown_test tests/NovelMarkdownTest.cpp)
+    target_link_libraries(novelmarkdown_test PRIVATE novelstore)
+    novelclanker_warnings(novelmarkdown_test)
+    add_test(NAME novelmarkdown COMMAND novelmarkdown_test "${CMAKE_CURRENT_BINARY_DIR}/test-data-markdown")
+
+    add_executable(epub_test tests/EpubTest.cpp)
+    target_link_libraries(epub_test PRIVATE novelepub ZLIB::ZLIB Qt6::Core) # zlib: unzips; Qt: checks the XML
+    novelclanker_warnings(epub_test)
+    add_test(NAME epub COMMAND epub_test "${CMAKE_CURRENT_BINARY_DIR}/test-data-epub")
+
+    # Optional: validate the test books with EPUBCheck when Java and epubcheck.jar are available (not part of the
+    # repository: unpack a release into build/tools/epubcheck/ or set EPUBCHECK_JAR).
+    find_program(JAVA_EXECUTABLE java)
+    file(GLOB _epubcheck_jars "${CMAKE_CURRENT_SOURCE_DIR}/build/tools/epubcheck/*/epubcheck.jar")
+    if(EXISTS "$ENV{EPUBCHECK_JAR}")
+        set(EPUBCHECK_JAR "$ENV{EPUBCHECK_JAR}" CACHE FILEPATH "" FORCE)
+    elseif(_epubcheck_jars)
+        list(GET _epubcheck_jars 0 _jar)
+        set(EPUBCHECK_JAR "${_jar}" CACHE FILEPATH "" FORCE)
+    endif()
+    if(JAVA_EXECUTABLE AND EXISTS "${EPUBCHECK_JAR}")
+        add_test(NAME epubcheck COMMAND "${CMAKE_COMMAND}" -DEPUB_TEST=$<TARGET_FILE:epub_test>
+                 -DJAVA=${JAVA_EXECUTABLE} -DEPUBCHECK_JAR=${EPUBCHECK_JAR}
+                 -DOUT=${CMAKE_CURRENT_BINARY_DIR}/test-data-epubcheck
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/epubcheck.cmake")
+        set_tests_properties(epubcheck PROPERTIES TIMEOUT 300)
+    endif()
 
     add_executable(lmstudio_test tests/LmStudioClientTest.cpp)
     target_link_libraries(lmstudio_test PRIVATE novelai)
@@ -239,12 +305,17 @@ if(BUILD_TESTING)
     novelclanker_warnings(mainwindow_test)
     add_test(NAME mainwindow COMMAND mainwindow_test "${CMAKE_CURRENT_BINARY_DIR}/test-data-ui")
 
+    add_executable(spelling_test tests/SpellCheckerTest.cpp)
+    target_link_libraries(spelling_test PRIVATE novelui)
+    novelclanker_warnings(spelling_test)
+    add_test(NAME spelling COMMAND spelling_test)
+
     # Widget tests run headless: Qt's "minimal" platform never shows a window.
-    set_tests_properties(settings mainwindow PROPERTIES TIMEOUT 120 ENVIRONMENT
-        "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${QT_BIN_DIR}/../plugins")
+    set_tests_properties(settings mainwindow spelling PROPERTIES TIMEOUT 120 ENVIRONMENT
+        "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${QT_BIN_DIR}/../plugins;NOVELCLANKER_DICTIONARIES=${CMAKE_CURRENT_SOURCE_DIR}/dictionaries")
     if(WIN32)
         # Find the Qt DLLs without relying on windeployqt having run.
-        set_tests_properties(lmstudio settings chat planstructure prose mainwindow PROPERTIES
+        set_tests_properties(lmstudio settings chat planstructure prose epub mainwindow spelling PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${QT_BIN_DIR}")
     endif()
 

@@ -155,6 +155,27 @@ void testRemovedEntriesAreGone(const fs::path &dir)
     EXPECT(outline(store) == "Act[]");
 }
 
+// Book details: set together, kept byte for byte, removed when empty, other details untouched.
+// @relation(FR-BOOK-1, DAT-11, scope=function)
+void testDetails(const fs::path &dir)
+{
+    {
+        NovelStore store(dir, NovelStore::Mode::Create);
+        EXPECT(store.details().empty() && store.detail("title").empty());
+        store.setDetails({{"title", "The Map Room"}, {"author", "E. Lindqvist"}, {"keywords", "maps\nharbour"}});
+        store.setDetails({{"subtitle", "A Novel"}, {"author", ""}}); // empty removes; title is kept
+        EXPECT(throws<std::invalid_argument>([&] { store.setDetails({{"Bad Name", "x"}}); }));
+        EXPECT(throws<std::invalid_argument>([&] { store.detail("../title"); }));
+    }
+    NovelStore store(dir, NovelStore::Mode::Open);
+    const auto details = store.details();
+    EXPECT(details.size() == 3);
+    EXPECT(store.detail("title") == "The Map Room" && store.detail("subtitle") == "A Novel");
+    EXPECT(store.detail("keywords") == "maps\nharbour");
+    EXPECT(store.detail("author").empty() && !details.count("author"));
+    EXPECT(store.acts().empty() && store.synopsis().empty()); // details don't touch anything else
+}
+
 // @relation(FR-SYN-1, DAT-5, DAT-6, scope=function)
 void testSynopsis(const fs::path &dir)
 {
@@ -225,9 +246,9 @@ void testBriefsAndImport(const fs::path &dir)
     using NS = NovelStore::NewScene;
     const std::vector<NA> planned{
         NA{"Act 1: Setup", "Mira's world.",
-           {NC{"Chapter 1: The Letter", "Discovery.", {NS{"The Letter", "POV: Mira. She finds it."}, NS{"The Council", ""}}},
+           {NC{"Chapter 1: The Letter", "Discovery.", {NS{"The Letter", "POV: Mira. She finds it.", {}}, NS{"The Council", "", {}}}},
             NC{"Chapter 2: Silence", "", {}}}},
-        NA{"Act 2", "", {NC{"Chapter 3: Storm", "", {NS{"Waves", "She nearly drowns."}}}}}};
+        NA{"Act 2", "", {NC{"Chapter 3: Storm", "", {NS{"Waves", "She nearly drowns.", {}}}}}}};
     Id existingScene = 0;
     {
         NovelStore store(dir, NovelStore::Mode::Create);
@@ -257,7 +278,7 @@ void testBriefsAndImport(const fs::path &dir)
         EXPECT(store.acts()[1].chapters[0].scenes[1].brief.empty());
 
         // Replace everything.
-        const auto first = store.importStructure({NA{"New", "", {NC{"Ch", "", {NS{"S", "brief"}}}}}}, true);
+        const auto first = store.importStructure({NA{"New", "", {NC{"Ch", "", {NS{"S", "brief", {}}}}}}}, true);
         EXPECT(outline(store) == "New[Ch(S)]");
         EXPECT(throws<std::invalid_argument>([&] { store.sceneText(existingScene); }));
         EXPECT(first && store.acts()[0].chapters[0].scenes[0].id == *first);
@@ -430,6 +451,7 @@ int main(int argc, char **argv)
         testStructure(root / fs::path(u8"Mitt Äventyr 小説.novel"));
         testRemovedEntriesAreGone(root / "removed.novel");
         testSynopsis(root / "synopsis.novel");
+        testDetails(root / "details.novel");
         testPlans(root / "plans.novel");
         testPlanModelOverride(root / "override.novel");
         testPlanChat(root / "chat.novel");

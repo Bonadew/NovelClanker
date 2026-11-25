@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -82,6 +83,7 @@ class NovelStore
     struct NewScene {
         std::string title;
         std::string brief;
+        std::string text; // the scene's Markdown (empty for a new, unwritten scene)
     };
     struct NewChapter {
         std::string title;
@@ -135,7 +137,7 @@ class NovelStore
     void rename(Id id, std::string_view title);
     void setBrief(Id id, std::string_view brief); // empty removes it
 
-    // Adds a whole structure (scenes start without text) in one atomic write, after the existing acts, or
+    // Adds a whole structure (scenes with their text, if given) in one atomic write, after the existing acts, or
     // in place of everything if `replace` is true (deleting all existing acts, chapters, scenes and their
     // text). Returns the id of the first new scene, if any.
     std::optional<Id> importStructure(const std::vector<NewAct> &acts, bool replace);
@@ -146,6 +148,13 @@ class NovelStore
     // The synopsis is stored byte-for-byte as given; empty until set.
     std::string synopsis() const;
     void setSynopsis(std::string_view text);
+
+    // Book details for publishing (title, author, description, ...; see docs/storage-format.md), as text by name.
+    // Names are lower-case letters, digits and '_'. A detail that isn't set is empty.
+    std::string detail(std::string_view name) const;
+    std::map<std::string, std::string> details() const;
+    // Sets the given details in one atomic write; an empty value removes that detail. Others are kept.
+    void setDetails(const std::map<std::string, std::string> &values);
 
     // Model id to generate plans with for this novel, overriding the application's planner setting.
     // Empty = use the setting.

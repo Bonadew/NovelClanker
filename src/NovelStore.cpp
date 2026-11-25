@@ -18,6 +18,7 @@ constexpr std::string_view kFormatVersion = "1";
 constexpr std::string_view kNextIdKey = "novel/next_id";
 constexpr std::string_view kActsKey = "novel/acts";
 constexpr std::string_view kSynopsisKey = "novel/synopsis";
+constexpr std::string_view kDetailsPrefix = "novel/details/";
 constexpr std::string_view kPlansKey = "novel/plans";
 constexpr std::string_view kPlanModelKey = "novel/plan_model";
 constexpr std::string_view kPlanTemplateKey = "novel/plan_template";
@@ -378,7 +379,7 @@ std::optional<NovelStore::Id> NovelStore::importStructure(const std::vector<NewA
             for (const NewScene &newScene : newChapter.scenes) {
                 Scene scene{next++, newScene.title, newScene.brief};
                 batch.Put(key("scene", scene.id, "title"), scene.title);
-                batch.Put(key("scene", scene.id, "text"), "");
+                batch.Put(key("scene", scene.id, "text"), newScene.text);
                 putBrief("scene", scene.id, scene.brief);
                 if (!firstScene) {
                     firstScene = scene.id;
@@ -422,6 +423,48 @@ std::string NovelStore::synopsis() const
 void NovelStore::setSynopsis(std::string_view text)
 {
     check(m_db->Put(durableWrites(), slice(kSynopsisKey), slice(text)), "Cannot save synopsis");
+}
+
+namespace {
+std::string detailKey(std::string_view name)
+{
+    const bool valid = !name.empty() && std::all_of(name.begin(), name.end(), [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+    });
+    if (!valid) {
+        throw std::invalid_argument("Invalid detail name: " + std::string(name));
+    }
+    return std::string(kDetailsPrefix) + std::string(name);
+}
+} // namespace
+
+std::string NovelStore::detail(std::string_view name) const
+{
+    return getOptional(*m_db, detailKey(name), "Cannot read the novel's details");
+}
+
+std::map<std::string, std::string> NovelStore::details() const
+{
+    std::map<std::string, std::string> result;
+    std::unique_ptr<rocksdb::Iterator> it(m_db->NewIterator({}));
+    for (it->Seek(slice(kDetailsPrefix)); it->Valid() && it->key().starts_with(slice(kDetailsPrefix)); it->Next()) {
+        result.emplace(it->key().ToString().substr(kDetailsPrefix.size()), it->value().ToString());
+    }
+    check(it->status(), "Cannot read the novel's details");
+    return result;
+}
+
+void NovelStore::setDetails(const std::map<std::string, std::string> &values)
+{
+    rocksdb::WriteBatch batch;
+    for (const auto &[name, value] : values) {
+        if (value.empty()) {
+            batch.Delete(detailKey(name));
+        } else {
+            batch.Put(detailKey(name), value);
+        }
+    }
+    check(m_db->Write(durableWrites(), &batch), "Cannot save the novel's details");
 }
 
 std::string NovelStore::planModelOverride() const
