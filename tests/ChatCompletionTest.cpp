@@ -85,12 +85,13 @@ void testPrompt()
            messages[1].content.contains("- **Scene 1:"));
 }
 
-// @relation(FR-TPL-2, FR-TPL-3, FR-TPL-5, AI-6, scope=function)
+// @relation(FR-TPL-2, FR-TPL-3, FR-TPL-5, FR-TPL-6, AI-6, scope=function)
 void testPlanTemplates()
 {
     const auto &all = PlanPrompt::templates();
-    EXPECT(all.size() == 2);
-    EXPECT(all[0].id == PlanPrompt::kThreeActTemplate && all[1].id == PlanPrompt::kInnerStagesTemplate);
+    EXPECT(all.size() == 3);
+    EXPECT(all[0].id == PlanPrompt::kThreeActTemplate && all[1].id == PlanPrompt::kInnerStagesTemplate &&
+           all[2].id == PlanPrompt::kShortStoryTemplate);
     EXPECT(PlanPrompt::templateById("no-such-template").id == PlanPrompt::kThreeActTemplate); // default
     EXPECT(PlanPrompt::templateById("").id == PlanPrompt::kThreeActTemplate);
 
@@ -107,6 +108,17 @@ void testPlanTemplates()
     EXPECT(stages.endsWith(synopsis + "\n\"\"\""));
     const QList<ChatMessage> m = PlanPrompt::messages(synopsis, PlanPrompt::kInnerStagesTemplate);
     EXPECT(m.size() == 2 && m[0].content == PlanPrompt::systemPrompt() && m[1].content == stages);
+
+    // The short story prompt: three parts of one chapter each, few scenes with target lengths, a single effect.
+    const QString story = PlanPrompt::userPrompt("A ferry is late.", PlanPrompt::kShortStoryTemplate);
+    EXPECT(story.startsWith("Create a plan for the short story"));
+    EXPECT(story.contains("### Part 1: Beginning") && story.contains("### Part 2: Middle") &&
+           story.contains("### Part 3: End") && !story.contains("### Act 1:"));
+    EXPECT(story.contains("#### Chapter 1:") && story.contains("- **Scene 1:") && story.contains("Words: "));
+    EXPECT(story.contains("## Single effect") && story.contains("3 to 8 scenes") && story.contains("No subplots"));
+    EXPECT(story.endsWith("A ferry is late.\n\"\"\""));
+    EXPECT(PlanPrompt::templateById(PlanPrompt::kShortStoryTemplate).name == "Short story");
+    EXPECT(PlanPrompt::systemPrompt().contains("short story"));
 }
 
 // @relation(AI-7, AI-8, FR-CHT-2, FR-CHT-3, FR-CHT-4, scope=function)
@@ -199,6 +211,50 @@ void testStreaming()
     EXPECT(qAbs(request.value("temperature").toDouble() - 0.6) < 1e-9);
     EXPECT(request.value("messages").toArray().size() == 2);
     EXPECT(request.value("messages").toArray().at(1).toObject().value("content").toString().contains("A synopsis."));
+}
+
+// The request body sent for `messages` with the given reasoning setting.
+QJsonObject requestWith(Reasoning reasoning, const QList<ChatMessage> &messages)
+{
+    FakeServer server;
+    server.routes["/v1/chat/completions"] = {200, sseStream({"Done."}), "text/event-stream"};
+    ChatCompletion chat(server.url(), "test-model", messages, 0.5);
+    chat.setReasoning(reasoning);
+    QEventLoop loop;
+    QObject::connect(&chat, &ChatCompletion::finished, &loop, &QEventLoop::quit);
+    QObject::connect(&chat, &ChatCompletion::failed, &loop, &QEventLoop::quit);
+    QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+    chat.start();
+    loop.exec();
+    return QJsonDocument::fromJson(server.lastRequestBody).object();
+}
+
+// Reasoning: Default sends nothing extra; Low asks for low effort (gpt-oss); Off also puts Qwen3's "/no_think" into
+// the system message (adding one when there is none). The messages themselves are not changed otherwise.
+// @relation(AI-14, scope=function)
+void testReasoningControl()
+{
+    const QList<ChatMessage> withSystem{{"system", "You are a planner."}, {"user", "Plan it."}};
+    const auto content = [](const QJsonObject &request, int i) {
+        return request.value("messages").toArray().at(i).toObject().value("content").toString();
+    };
+
+    const QJsonObject normal = requestWith(Reasoning::Default, withSystem);
+    EXPECT(!normal.contains("reasoning_effort"));
+    EXPECT(content(normal, 0) == "You are a planner." && content(normal, 1) == "Plan it.");
+
+    const QJsonObject low = requestWith(Reasoning::Low, withSystem);
+    EXPECT(low.value("reasoning_effort").toString() == "low");
+    EXPECT(content(low, 0) == "You are a planner." && content(low, 1) == "Plan it.");
+
+    const QJsonObject off = requestWith(Reasoning::Off, withSystem);
+    EXPECT(off.value("reasoning_effort").toString() == "low");
+    EXPECT(content(off, 0) == "You are a planner.\n\n/no_think" && content(off, 1) == "Plan it.");
+
+    const QJsonObject offNoSystem = requestWith(Reasoning::Off, {{"user", "Write it."}});
+    EXPECT(offNoSystem.value("messages").toArray().size() == 2);
+    EXPECT(offNoSystem.value("messages").toArray().at(0).toObject().value("role").toString() == "system");
+    EXPECT(content(offNoSystem, 0) == "/no_think" && content(offNoSystem, 1) == "Write it.");
 }
 
 // @relation(AI-5, scope=function)
@@ -379,6 +435,7 @@ int main(int argc, char **argv)
     testPlanTemplates();
     testPlanChat();
     testStreaming();
+    testReasoningControl();
     testReasoningIsHidden();
     testTruncated();
     testErrors();

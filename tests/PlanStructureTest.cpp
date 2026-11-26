@@ -240,6 +240,30 @@ void testTypographicCharacters()
     EXPECT(acts[1].chapters[0].scenes[0].brief == "She comes back.");
 }
 
+// Quotes around a whole title are removed (as gpt-oss writes them); quotes inside a title stay.
+// @relation(FR-IMP-2, scope=function)
+void testQuotedTitles()
+{
+    const QString plan = QString::fromUtf8("## Structure\n\n"
+                                           "### Part 1: “Beginning”\n"
+                                           "#### Chapter 1: “The Waiting Night”\n"
+                                           "Purpose: set up the wait.\n"
+                                           "- **Scene 1: “On the Jetty”**  \n"
+                                           "  POV: Jonas. Words: 750.\n"
+                                           "- **Scene 2: \"Rowing Out\"**: POV: Jonas.\n"
+                                           "- **Scene 3: ‘Static’**: POV: Jonas.\n"
+                                           "- **Scene 4: «Landfall»**: POV: Jonas.\n"
+                                           "#### Chapter 2: 'Twas Night\n"
+                                           "- **Scene 1: “Run,” She Said**: POV: Anna.\n"
+                                           "- **Scene 2: \"Hold\" and \"Steer\"**: POV: Anna.\n"
+                                           "- **Scene 3: \"\"**: POV: Anna.\n");
+    const QList<Act> acts = parse(plan);
+    EXPECT(outline(acts) ==
+           QString::fromUtf8("Part 1: Beginning[Chapter 1: The Waiting Night(On the Jetty,Rowing Out,Static,Landfall),"
+                             "Chapter 2: 'Twas Night(“Run,” She Said,\"Hold\" and \"Steer\",\"\")]"));
+    EXPECT(acts[0].chapters[0].scenes[0].brief == "POV: Jonas. Words: 750."); // brief on the next line
+}
+
 // The "Inner stages across years" template: stages are the act-level parts and keep their word.
 // @relation(FR-IMP-2, FR-TPL-4, scope=function)
 void testStagePlan()
@@ -270,6 +294,43 @@ void testStagePlan()
     // Part and Book work the same way; the word is kept as written.
     EXPECT(outline(parse("## Part II: Later\n#### Chapter 3: X\n- **Scene 1: Y**: z\n## BOOK 1\n")) ==
            "Part II: Later[Chapter 3: X(Y)] Book 1[]");
+}
+
+// The short story template's shape: three parts of one chapter each, scenes with a target length.
+// @relation(FR-IMP-2, FR-TPL-4, FR-TPL-6, scope=function)
+void testShortStoryPlan()
+{
+    const QString plan = "# Low Water\n\n"
+                         "## Single effect\nQuiet dread that turns into relief.\n\n"
+                         "## Story spine\n"
+                         "1. Jonas waits for the ferry that is late (Part 1, opening)\n"
+                         "2. The ferry arrives without its pilot (Part 3, climax)\n\n"
+                         "## Structure\n\n"
+                         "### Part 1: Beginning\n"
+                         "Jonas on the jetty; the ferry is late.\n\n"
+                         "#### Chapter 1: The Jetty\n"
+                         "Set up the wait.\n"
+                         "- **Scene 1: Late**: POV: Jonas. Setting: the jetty, dusk. Words: 750. He counts the lights "
+                         "on the far shore.\n\n"
+                         "### Part 2: Middle\n"
+                         "The wait grows harder.\n\n"
+                         "#### Chapter 2: The Radio\n"
+                         "- **Scene 1: Static**: POV: Jonas. Setting: the harbour office. Words: 1,250. The radio "
+                         "answers with static.\n"
+                         "- **Scene 2: The Rowboat**: POV: Jonas. Setting: the bay. Words: 1,500. He rows out.\n\n"
+                         "### Part 3: End\n"
+                         "The ferry comes in.\n\n"
+                         "#### Chapter 3: Landfall\n"
+                         "- **Scene 1: The Pilot**: POV: Jonas. Setting: the jetty, night. Words: 1,000. His sister "
+                         "steps off, steering it herself.\n\n"
+                         "## Open questions\n- Is the pilot's absence explained?\n";
+    const QList<Act> acts = parse(plan);
+    EXPECT(outline(acts) == "Part 1: Beginning[Chapter 1: The Jetty(Late)] "
+                            "Part 2: Middle[Chapter 2: The Radio(Static,The Rowboat)] "
+                            "Part 3: End[Chapter 3: Landfall(The Pilot)]");
+    EXPECT(acts[1].brief == "The wait grows harder.");
+    EXPECT(acts[1].chapters[0].scenes[1].brief ==
+           "POV: Jonas. Setting: the bay. Words: 1,500. He rows out."); // the target length stays in the brief
 }
 
 // @relation(FR-IMP-5, scope=function)
@@ -353,7 +414,9 @@ int main(int argc, char **argv)
     testChaptersAsListItems();
     testSceneBeforeNextHeading();
     testTypographicCharacters();
+    testQuotedTitles();
     testStagePlan();
+    testShortStoryPlan();
     testNothingToFind();
     printRealPlan();
     checkNovelPlans();

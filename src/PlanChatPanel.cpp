@@ -1,5 +1,7 @@
 #include "PlanChatPanel.h"
 
+#include "AiSettings.h"
+
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -160,6 +162,7 @@ void PlanChatPanel::start(const QUrl &server, const QString &model, const QList<
     setAvailable(m_available);
     render();
     emit busyChanged(true);
+    m_request->setReasoning(AiSettings::load().reasoning);
     m_request->start();
 }
 

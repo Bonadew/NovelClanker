@@ -342,7 +342,7 @@ UID: FR-PRS-1
 PRIORITY: Must
 STATUS: Implemented
 STATEMENT: >>>
-Above the scene editor, **Write Scene**, **Expand** and a **Length** choice (200, 500, 1000 or 2000 words) use the prose writer model from Settings. The length choice is remembered per user.
+Above the scene editor, **Write Scene**, **Expand** and a **Length** choice (200, 500, 1000 or 2000 words) use the prose writer model from Settings, unless another model is chosen next to them (PLN-7). The length choice is remembered per user.
 <<<
 
 [REQUIREMENT]
@@ -621,6 +621,14 @@ STATEMENT: >>>
 Adding a template requires no change outside the template list and its prompt.
 <<<
 
+[REQUIREMENT]
+UID: FR-TPL-6
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+**Short story**: a plan for a short story (3,000 to 7,500 words unless the synopsis gives a length) with one protagonist, one central conflict, a small cast and a named single effect; a story spine of 5 to 8 beats; exactly three parts (``### Part 1: Beginning``, ``### Part 2: Middle``, ``### Part 3: End``) of one chapter each; 3 to 8 scenes in total, each with a target length (``Words:``) rounded to 250 words; no subplots, and an ending on the change or revelation without a moral or epilogue.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]
@@ -753,7 +761,7 @@ UID: FR-IMP-2
 PRIORITY: Must
 STATUS: Implemented
 STATEMENT: >>>
-Structure lines are recognised as headings, bold lines, list items or plain ``Chapter N: Title`` lines, including typographic spaces and hyphens; act-level parts may be named Act, Stage, Part or Book and keep that word in their title; no structure line is ever taken into a brief.
+Structure lines are recognised as headings, bold lines, list items or plain ``Chapter N: Title`` lines, including typographic spaces and hyphens; act-level parts may be named Act, Stage, Part or Book and keep that word in their title; quotation marks around a whole title are removed; no structure line is ever taken into a brief.
 <<<
 
 [REQUIREMENT]
@@ -1195,6 +1203,14 @@ STATEMENT: >>>
 The prose prompts end with the length as a maximum, with a paragraph estimate. Write Scene may stop early once the scene is covered; Expand must keep every event of the passage in order, keep the author's dialogue, add detail rather than plot, and never continue past the passage.
 <<<
 
+[REQUIREMENT]
+UID: AI-14
+PRIORITY: Should
+STATUS: Implemented
+STATEMENT: >>>
+**Settings > Reasoning** limits how long reasoning models think, for plan generation, plan chat and prose: **Model default** sends nothing extra; **Low** sends ``reasoning_effort: "low"`` (followed by gpt-oss, which then reasons about half as much); **Off where possible** also adds ``/no_think`` to the system message (followed by Qwen3, which then doesn't reason at all), adding a system message when there is none. Models without reasoning ignore both. The setting is saved per user, and the length-limit messages point to it.
+<<<
+
 [[/SECTION]]
 
 [[SECTION]]
@@ -1365,9 +1381,9 @@ Edit briefs in the UI (the store already supports it); needed for Write Scene on
 [REQUIREMENT]
 UID: PLN-3
 PRIORITY: Should
-STATUS: Planned
+STATUS: Implemented
 STATEMENT: >>>
-Option to turn off or limit reasoning for reasoning models, which can exhaust their context before answering.
+Option to turn off or limit reasoning for reasoning models, which can exhaust their context before answering (AI-14, **Settings > Reasoning**).
 <<<
 
 [REQUIREMENT]
@@ -1397,9 +1413,9 @@ Undo for Create Structure when it replaces the manuscript.
 [REQUIREMENT]
 UID: PLN-7
 PRIORITY: Could
-STATUS: Planned
+STATUS: Implemented
 STATEMENT: >>>
-Per-novel prose writer model override, like the planner model on the Synopsis tab.
+Prose writer model choice on the Manuscript tab. A **Model** dropdown next to Write Scene, Expand and Length lists the server's models; "Settings default" uses the prose writer model from Settings and any other choice is used for the following Write Scene or Expand. The choice is not stored in the novel, since each Write Scene or Expand may use a different model; it is kept while the application runs.
 <<<
 
 [TEXT]

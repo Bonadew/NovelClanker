@@ -66,7 +66,10 @@ flowchart LR
   `http://127.0.0.1:1234`; addresses like `127.0.0.1:1234` or `.../v1` are accepted). The settings view
   connects to the server to list its models (embedding models are left out) in two dropdowns: one for the
   **orchestrator/planner** model and one for the **prose writer** model. Use **Refresh** after starting
-  LM Studio's server. Settings are stored per user (QSettings), not in the novel.
+  LM Studio's server. **Reasoning** limits how long reasoning ("thinking") models think before answering, which
+  is faster and leaves more of their length limit for the answer: **Low** (gpt-oss reasons about half as much) or
+  **Off where possible** (Qwen3 stops thinking; gpt-oss can't, so it reasons at Low). Settings are stored per user
+  (QSettings), not in the novel.
 - **View → Theme** switches between light and dark mode: **System** follows the operating system, **Light** and
   **Dark** always use that scheme (the same on every platform). **Switch Light/Dark** (**Ctrl+Shift+D**) flips to
   the other one. The choice is remembered.
@@ -97,6 +100,10 @@ flowchart LR
     Parts are `### Stage N: <name>`, every scene carries a time marker (season, birthday, signs of ageing,
     changing technology or surroundings) instead of "years later" summaries, and a bleak or unresolved ending
     is kept as the synopsis has it.
+  - **Short story**: a story of about 3,000-7,500 words (or the length the synopsis asks for) with one
+    protagonist, one conflict and a named *single effect*, the impression the story leaves. Parts are
+    `### Part 1: Beginning`, `### Part 2: Middle` and `### Part 3: End`, one chapter each, with 3-8 scenes in
+    total; every scene brief has a target length (`Words: 1,250`) to choose **Length** from when writing it.
 - Next to **Generate Plan**, the **Planner model** dropdown chooses the model for this novel's plans. It lists
   the LM Studio server's models (**Refresh** fetches them again); "Settings default" uses the planner model
   from Edit → Settings, and any other choice overrides it. The choice is saved with the novel.
@@ -106,8 +113,10 @@ flowchart LR
   fails or produces nothing, no plan is added. If the model hits its length limit the plan view says so; raise
   the model's context length in LM Studio (a full plan needs roughly 8-16k tokens).
 
-- Above the scene editor, the **prose writer** model (chosen in Edit → Settings) writes text, at the length
-  chosen in **Length** (200, 500, 1000 or 2000 words; the choice is remembered):
+- Above the scene editor, the **prose writer** model writes text, at the length chosen in **Length** (200, 500,
+  1000 or 2000 words; the choice is remembered). **Model** picks the model: "Settings default" uses the prose
+  writer model from Edit → Settings, and any server model can be chosen for the next Write Scene or Expand. That
+  choice is kept while NovelClanker runs but not saved with the novel.
   - **Write Scene** writes the whole scene from its brief (or its chapter's brief). The model also sees the
     synopsis, the act and chapter, the end of the previous scene (so it continues from there) and the next
     scene's brief (so it stops before it). If the scene already has text you are asked before it is replaced.
@@ -227,7 +236,7 @@ LM Studio (`NOVELCLANKER_LIVE_LMSTUDIO=http://127.0.0.1:1234`):
 - `chat_test` with `NOVELCLANKER_LIVE_PLANNER_MODEL=<model id>` also generates a plan from a sample synopsis
   (written to `NOVELCLANKER_LIVE_PLAN_OUT` if set). With `NOVELCLANKER_LIVE_REFINE_PLAN=<plan file>` and
   `NOVELCLANKER_LIVE_REFINE_REQUEST="..."` it refines that plan through the plan chat instead.
-  `NOVELCLANKER_LIVE_TEMPLATE=<template id>` (`three-act`, `inner-stages`) and
+  `NOVELCLANKER_LIVE_TEMPLATE=<template id>` (`three-act`, `inner-stages`, `short-story`) and
   `NOVELCLANKER_LIVE_SYNOPSIS_FILE=<file>` choose the template and replace the sample synopsis.
 - `prose_test` with `NOVELCLANKER_LIVE_PROSE_MODEL=<model id>` expands a one-sentence sketch to 200 and 500 words,
   expands an opening sentence that a long paragraph follows (reporting repeats of that paragraph;

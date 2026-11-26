@@ -9,6 +9,15 @@
 class QNetworkAccessManager;
 class QNetworkReply;
 
+// How much a reasoning ("thinking") model may reason before answering. Models differ in what they follow:
+// gpt-oss takes a reasoning effort (low still reasons a little); Qwen3 turns thinking off with "/no_think".
+// Models without reasoning ignore both.
+enum class Reasoning {
+    Default, // as the model is set up in LM Studio
+    Low,     // "reasoning_effort": "low"
+    Off,     // as Low, and "/no_think" in the system message
+};
+
 struct ChatMessage {
     QString role; // "system", "user" or "assistant"
     QString content;
@@ -31,6 +40,9 @@ class ChatCompletion : public QObject
   public:
     ChatCompletion(const QUrl &server, const QString &model, const QList<ChatMessage> &messages,
                    double temperature, QObject *parent = nullptr);
+
+    // Before start(): how much the model may reason (Default sends nothing extra).
+    void setReasoning(Reasoning reasoning);
 
     void start();
     void abort();
@@ -58,6 +70,7 @@ class ChatCompletion : public QObject
     QString m_model;
     QList<ChatMessage> m_messages;
     double m_temperature;
+    Reasoning m_reasoning = Reasoning::Default;
 
     QByteArray m_buffer;  // unparsed stream bytes
     QString m_raw;        // all content tokens so far (may include <think> blocks)

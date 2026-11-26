@@ -133,6 +133,81 @@ Number chapters continuously through the whole novel, and number scenes from 1 w
 Synopsis:
 """)PROMPT");
 
+// A short story: one protagonist, one conflict, a short span of time and a single effect. Planned in three
+// parts (beginning, middle, end) with few scenes, each with a target length, so the whole story stays within
+// a short story's length. A short story has no chapters, so each part holds exactly one chapter.
+const QString kShortStoryInstructions = QStringLiteral(R"PROMPT(Create a plan for the short story described by the synopsis at the end of this message.
+
+A short story is not a small novel. It follows one protagonist through one central conflict over a short span of time, with few characters and few settings, and everything in it works toward a single effect: one dominant emotion or impression the reader is left with.
+
+Requirements:
+- Stay faithful to the synopsis: keep its characters, events, tone and ending, even when the ending is open, ambiguous or bleak. Where it is vague, make choices that fit its tone, and list every important invention under "Open questions" so the author can confirm or change it.
+- Length: if the synopsis gives a target length, use it; otherwise aim for 3,000 to 7,500 words. Give every scene a target length, rounded to 250 words (usually 500 to 2,000), so that together they add up to the story's length.
+- Work out the story before the details: first name the "Single effect", then write the "Story spine", 5 to 8 beats in chronological order, each labelled with its part: the opening (the protagonist in their situation, already under pressure), the disturbance that starts the story, the complications, the climax (the moment of greatest pressure, where the protagonist must choose or act), and the resolution (the change or revelation, and the final image). Then build the Structure from the spine: follow its order exactly, and never repeat or reorder beats.
+- Start as late as possible: open close to the disturbance, and weave any backstory into the scenes instead of opening with it. Do not add flashbacks unless the synopsis needs them.
+- Use exactly three parts (### Part 1: Beginning, ### Part 2: Middle, ### Part 3: End). The Beginning holds the opening and the disturbance and is short; the Middle escalates the one central conflict with one to three complications or attempts that fail or cost something; the End holds the climax and a brief resolution. No subplots.
+- Each part holds exactly one chapter (#### Chapter N: <title>). The manuscript needs this level; it is not a chapter break in the story.
+- Use 3 to 8 scenes in total, as few as the story needs. Every scene must change something: what the protagonist wants, knows or can do, a relationship, or their situation. Cut any scene that only explains or sets the mood.
+- Keep the cast small: the protagonist and at most three other named characters. Use one point of view unless the synopsis clearly calls for more.
+- End on the change or revelation and the final image. Do not explain the theme, sum up a moral or add an epilogue.
+- Write the plan in the same language as the synopsis.
+
+Output only the plan, as Markdown, with exactly this structure:
+
+# <Working title>
+
+## Premise
+<One or two sentences: protagonist, what they want, what stands in the way, and what is at stake.>
+
+## Genre, tone and point of view
+<Genre, target audience, tone, narrative point of view and tense, and the target length in words.>
+
+## Single effect
+<One sentence: the emotion or impression the story leaves the reader with.>
+
+## Characters
+- **<Name>**: <role>. Wants: <what they want in this story>. Changes: <how they change, or what they realise>.
+
+## Settings
+- **<Place>**: <short description and its role in the story>.
+
+## Story spine
+1. <Beat> (Part 1, opening)
+2. <Beat> (Part 1, disturbance)
+...
+<n>. <Beat> (Part 3, climax)
+<n+1>. <Beat> (Part 3, resolution)
+
+## Structure
+
+### Part 1: Beginning
+<One paragraph: what this part accomplishes and which beats it contains.>
+
+#### Chapter 1: <chapter title>
+<One sentence: the purpose of this part of the story.>
+- **Scene 1: <scene title>**: POV: <character>. Setting: <place, time>. Words: <target length>. <Goal, conflict and outcome.>
+- **Scene 2: <scene title>**: ...
+
+### Part 2: Middle
+<One paragraph.>
+
+#### Chapter 2: <chapter title>
+...
+
+### Part 3: End
+<One paragraph.>
+
+#### Chapter 3: <chapter title>
+...
+
+## Open questions
+- <A decision the author should confirm or make.>
+
+Number scenes from 1 within each chapter.
+
+Synopsis:
+""")PROMPT");
+
 } // namespace
 
 const QList<Template> &templates()
@@ -140,11 +215,18 @@ const QList<Template> &templates()
     static const QList<Template> all{
         {kThreeActTemplate, QStringLiteral("Three acts (25/50/25)"),
          QStringLiteral("A plot-driven novel in three acts with the classic turning points: inciting incident, first plot "
-                        "point, midpoint, crisis, climax and resolution.")},
+                        "point, midpoint, crisis, climax and resolution."),
+         kThreeActInstructions},
         {kInnerStagesTemplate, QStringLiteral("Inner stages across years"),
          QStringLiteral("A character-driven novel spanning many years, planned as the protagonist's progression through "
                         "inner stages (like the stages of grief). Time passes through concrete markers in the scenes; the "
-                        "ending may be bleak or unresolved.")},
+                        "ending may be bleak or unresolved."),
+         kInnerStagesInstructions},
+        {kShortStoryTemplate, QStringLiteral("Short story"),
+         QStringLiteral("A short story (about 3,000 to 7,500 words unless the synopsis says otherwise): one protagonist, "
+                        "one conflict and a single effect, in a beginning, middle and end of 3 to 8 scenes, each with a "
+                        "target length."),
+         kShortStoryInstructions},
     };
     return all;
 }
@@ -162,14 +244,12 @@ const Template &templateById(const QString &id)
 QString systemPrompt()
 {
     return QStringLiteral(
-        R"(You are an experienced developmental editor and story architect. You turn a novel synopsis into a clear, practical writing plan that an author (or a writing assistant) can follow scene by scene. You plan the novel; you do not write its prose. You follow the requested output format exactly.)");
+        R"(You are an experienced developmental editor and story architect. You turn the synopsis of a novel or short story into a clear, practical writing plan that an author (or a writing assistant) can follow scene by scene. You plan the story; you do not write its prose. You follow the requested output format exactly.)");
 }
 
 QString userPrompt(const QString &synopsis, const QString &templateId)
 {
-    const QString &instructions =
-        templateById(templateId).id == kInnerStagesTemplate ? kInnerStagesInstructions : kThreeActInstructions;
-    return instructions + "\n" + synopsis + "\n\"\"\"";
+    return templateById(templateId).instructions + "\n" + synopsis + "\n\"\"\"";
 }
 
 QList<ChatMessage> messages(const QString &synopsis, const QString &templateId)

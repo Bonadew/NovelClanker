@@ -72,6 +72,37 @@ void testDefaults()
     const AiSettings settings = AiSettings::load();
     EXPECT(settings.serverUrl == "http://127.0.0.1:1234");
     EXPECT(settings.plannerModel.isEmpty() && settings.proseModel.isEmpty());
+    EXPECT(settings.reasoning == Reasoning::Default);
+}
+
+// The reasoning choice is shown, saved and shown again.
+// @relation(AI-14, scope=function)
+void testReasoningSetting()
+{
+    QSettings().clear();
+    FakeServer server; // the dialog lists the server's models: never ask a real LM Studio from a test
+    server.routes["/api/v1/models"] = {200, kSampleNativeModels};
+    AiSettings saved;
+    saved.serverUrl = server.url().toString();
+    saved.save();
+    {
+        SettingsDialog dialog;
+        auto *combo = dialog.findChild<QComboBox *>("reasoningCombo");
+        EXPECT(combo && combo->count() == 3 && combo->currentText() == "Model default");
+        combo->setCurrentIndex(combo->findData(static_cast<int>(Reasoning::Off)));
+        dialog.accept();
+    }
+    EXPECT(AiSettings::load().reasoning == Reasoning::Off);
+    EXPECT(QSettings().value("lmStudio/reasoning").toString() == "off");
+    {
+        SettingsDialog dialog;
+        auto *combo = dialog.findChild<QComboBox *>("reasoningCombo");
+        EXPECT(combo->currentText() == "Off where possible");
+        combo->setCurrentIndex(combo->findData(static_cast<int>(Reasoning::Low)));
+        dialog.accept();
+    }
+    EXPECT(AiSettings::load().reasoning == Reasoning::Low);
+    QSettings().clear();
 }
 
 // @relation(FR-SET-2, FR-SET-3, FR-SET-4, scope=function)
@@ -180,6 +211,7 @@ int main(int argc, char **argv)
     QApplication::setApplicationName("SettingsDialogTest");
 
     testDefaults();
+    testReasoningSetting();
     testFetchSelectAndSave();
     testUnreachableKeepsSelection();
     testInvalidAddressNotSaved();

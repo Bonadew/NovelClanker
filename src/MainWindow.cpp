@@ -1212,6 +1212,11 @@ QWidget *MainWindow::buildProseBar()
     }
     const int saved = QSettings().value(kProseLengthKey, ProsePrompt::kDefaultLength).toInt();
     m_proseLengthCombo->setCurrentIndex(std::max(0, m_proseLengthCombo->findData(saved)));
+    m_proseModelCombo = new QComboBox(bar);
+    m_proseModelCombo->setObjectName("proseModelCombo");
+    ModelCombo::setUp(m_proseModelCombo);
+    m_proseModelCombo->setToolTip(tr("Model for the next Write Scene or Expand. \"Settings default\" uses the prose "
+                                     "writer model from Edit > Settings."));
     m_proseStopButton = new QPushButton(tr("Stop"), bar);
     m_proseStopButton->setObjectName("proseStopButton");
     m_proseStopButton->hide();
@@ -1223,6 +1228,8 @@ QWidget *MainWindow::buildProseBar()
     layout->addWidget(m_expandButton);
     layout->addWidget(new QLabel(tr("Length:"), bar));
     layout->addWidget(m_proseLengthCombo);
+    layout->addWidget(new QLabel(tr("Model:"), bar));
+    layout->addWidget(m_proseModelCombo);
     layout->addWidget(m_proseStopButton);
     layout->addWidget(m_proseStatus, 1);
 
@@ -1230,6 +1237,7 @@ QWidget *MainWindow::buildProseBar()
     m_proseRefresh->setSingleShot(true);
     m_proseRefresh->setInterval(100);
     connect(m_proseRefresh, &QTimer::timeout, this, [this] { showProseText(m_pendingProse); });
+    connect(m_proseModelCombo, &QComboBox::currentIndexChanged, this, &MainWindow::updateProseActions);
     connect(m_writeSceneButton, &QPushButton::clicked, this, &MainWindow::writeScene);
     connect(m_expandButton, &QPushButton::clicked, this, &MainWindow::expandPassage);
     connect(m_proseStopButton, &QPushButton::clicked, this, [this] {
@@ -1250,12 +1258,13 @@ int MainWindow::proseLength() const
 
 QString MainWindow::proseModel() const
 {
-    return AiSettings::load().proseModel;
+    const QString chosen = ModelCombo::selectedId(m_proseModelCombo);
+    return chosen.isEmpty() ? AiSettings::load().proseModel : chosen;
 }
 
 void MainWindow::updateProseActions()
 {
-    if (!m_writeSceneButton) {
+    if (!m_writeSceneButton || !m_proseModelCombo) {
         return; // still building the window
     }
     const bool idle = !m_proseRequest && m_currentScene.has_value();
@@ -1263,10 +1272,17 @@ void MainWindow::updateProseActions()
     m_expandButton->setEnabled(idle && !editorText(m_editor).trimmed().isEmpty());
     m_expandButton->setText(m_editor->textCursor().hasSelection() ? tr("Expand Selection") : tr("Expand"));
     m_proseLengthCombo->setEnabled(!m_proseRequest);
+    m_proseModelCombo->setEnabled(!m_proseRequest);
     m_proseStopButton->setVisible(m_proseRequest != nullptr);
     const QString model = proseModel();
-    const QString uses =
-        model.isEmpty() ? tr("No prose writer model is chosen in Settings.") : tr("Uses %1.").arg(model);
+    QString uses;
+    if (model.isEmpty()) {
+        uses = tr("No prose writer model is chosen yet: choose one in Model or in Edit > Settings.");
+    } else if (ModelCombo::selectedId(m_proseModelCombo).isEmpty()) {
+        uses = tr("Uses %1 (from Settings).").arg(model);
+    } else {
+        uses = tr("Uses %1.").arg(model);
+    }
     m_writeSceneButton->setToolTip(tr(kWriteSceneTip) + " " + uses);
     m_expandButton->setToolTip(tr(kExpandTip) + " " + uses);
 }
@@ -1277,7 +1293,9 @@ bool MainWindow::checkProseModel(const QString &title)
         return true;
     }
     QMessageBox box(QMessageBox::Information, title,
-                    tr("Choose a prose writer model and an LM Studio server in Settings first."), QMessageBox::Cancel,
+                    tr("Choose a prose writer model (in Model above the scene, or in Settings) and an LM Studio "
+                       "server in Settings first."),
+                    QMessageBox::Cancel,
                     this);
     QPushButton *open = box.addButton(tr("Open Settings..."), QMessageBox::AcceptRole);
     box.exec();
@@ -1447,6 +1465,7 @@ void MainWindow::startProse(const QList<ChatMessage> &messages, int start, int l
     updateProseActions();
     m_proseStatus->setText(
         tr("Writing with %1... (LM Studio may need a moment to load the model)").arg(m_proseModelInUse));
+    m_proseRequest->setReasoning(AiSettings::load().reasoning);
     m_proseRequest->start();
 }
 
@@ -1512,8 +1531,9 @@ void MainWindow::onProseFinished(const QString &text, bool truncated)
     finishProse();
     const QString model = m_proseModelInUse;
     if (m_pendingProse.trimmed().isEmpty()) {
-        m_proseStatus->setText(truncated ? tr("%1 reached its length limit before writing anything. Increase the "
-                                              "model's context length in LM Studio, or choose a non-reasoning model.")
+        m_proseStatus->setText(truncated ? tr("%1 reached its length limit before writing anything. Set Reasoning "
+                                              "to Low or Off in Settings, increase the model's context length in "
+                                              "LM Studio, or choose a non-reasoning model.")
                                                .arg(model)
                                          : tr("%1 returned an empty answer.").arg(model));
         return;
@@ -1617,7 +1637,7 @@ QWidget *MainWindow::buildSynopsisView()
         m_serverModels = models;
         m_modelsFetched = true;
         m_modelsError.clear();
-        populatePlanModelCombo();
+        populateModelCombos();
     });
     connect(m_modelClient, &LmStudioClient::fetchFailed, this, [this](const QString &error) {
         m_modelsError = error;
@@ -1754,7 +1774,7 @@ void MainWindow::loadSynopsisAndPlan()
     refreshPlanList(first);
     m_tabs->setTabVisible(m_tabs->indexOf(m_planView), m_store != nullptr);
     showPlanTemplate();
-    populatePlanModelCombo();
+    populateModelCombos();
     if (m_store) {
         refreshPlanModels();
     }
@@ -2043,6 +2063,7 @@ void MainWindow::generatePlan()
     m_planStatus->setText(
         tr("Generating with %1... (LM Studio may need a moment to load the model)").arg(m_planModel));
     m_tabs->setCurrentWidget(m_planView);
+    m_planRequest->setReasoning(AiSettings::load().reasoning);
     m_planRequest->start();
 }
 
@@ -2125,8 +2146,8 @@ void MainWindow::onPlanFinished(const QString &plan, bool truncated)
     if (plan.trimmed().isEmpty() && truncated) {
         // Typical for reasoning models: all tokens went into thinking.
         status = tr("%1 reached its length limit before writing anything (it probably spent it all on "
-                    "reasoning). Increase the model's context length in LM Studio, or choose a non-reasoning "
-                    "planner model, and generate again.")
+                    "reasoning). Set Reasoning to Low or Off in Settings, increase the model's context length in "
+                    "LM Studio, or choose a non-reasoning planner model, and generate again.")
                      .arg(m_planModel);
     } else if (plan.trimmed().isEmpty()) {
         status = tr("%1 returned an empty answer.").arg(m_planModel);
@@ -2150,7 +2171,7 @@ void MainWindow::openSettings()
 {
     SettingsDialog dialog(this);
     dialog.exec();
-    populatePlanModelCombo(); // the default model may have changed
+    populateModelCombos(); // the default model may have changed
     if (m_store) {
         refreshPlanModels(); // and so may the server
     }
@@ -2167,28 +2188,35 @@ void MainWindow::refreshPlanModels()
     m_modelClient->fetchModels(server);
 }
 
-void MainWindow::populatePlanModelCombo()
+void MainWindow::populateModelCombos()
 {
-    QString chosen;
+    QString planChosen;
     if (m_store) {
         attempt(tr("Could not read the plan model."),
-                [&] { chosen = QString::fromStdString(m_store->planModelOverride()); });
+                [&] { planChosen = QString::fromStdString(m_store->planModelOverride()); });
     }
-    const QString defaultModel = AiSettings::load().plannerModel;
+    // Not stored with the novel: each Write Scene or Expand may use a different model.
+    const QString proseChosen = ModelCombo::selectedId(m_proseModelCombo);
+    const AiSettings settings = AiSettings::load();
     m_loading = true;
-    ModelCombo::populate(m_planModelCombo, m_serverModels, chosen, m_modelsFetched);
-    // First entry: no override, use the planner model from Settings.
-    m_planModelCombo->insertItem(0,
-                                 defaultModel.isEmpty() ? tr("Settings default (none chosen)")
-                                                        : tr("Settings default (%1)").arg(defaultModel),
-                                 QString());
-    if (chosen.isEmpty()) {
-        m_planModelCombo->setCurrentIndex(0);
-    }
+    const auto fill = [&](QComboBox *combo, const QString &chosen, const QString &defaultModel) {
+        ModelCombo::populate(combo, m_serverModels, chosen, m_modelsFetched);
+        // First entry: no override, use the model from Settings.
+        combo->insertItem(0,
+                          defaultModel.isEmpty() ? tr("Settings default (none chosen)")
+                                                 : tr("Settings default (%1)").arg(defaultModel),
+                          QString());
+        if (chosen.isEmpty()) {
+            combo->setCurrentIndex(0);
+        }
+    };
+    fill(m_planModelCombo, planChosen, settings.plannerModel);
+    fill(m_proseModelCombo, proseChosen, settings.proseModel);
     m_planModelCombo->setEnabled(m_store != nullptr);
     m_refreshModelsButton->setEnabled(m_store != nullptr);
     m_loading = false;
     updatePlannerStatus();
+    updateProseActions();
 }
 
 void MainWindow::onPlanModelChosen()

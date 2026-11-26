@@ -95,7 +95,7 @@ class MainWindow : public QMainWindow
     void finishProse();
     void updateProseActions();
     int proseLength() const; // the chosen length in words
-    QString proseModel() const;
+    QString proseModel() const; // the Model dropdown's choice, else the prose writer model from Settings
     bool checkProseModel(const QString &title); // false (after telling the user) if no prose model is set
     ProsePrompt::SceneContext sceneContext(Id scene) const;
 
@@ -131,8 +131,8 @@ class MainWindow : public QMainWindow
     void setPlanGenerating(bool generating);
     void updatePlannerStatus();
     void openSettings();
-    void refreshPlanModels();      // fetch the server's models for the planner dropdown
-    void populatePlanModelCombo(); // "Settings default" + server models, selecting the novel's choice
+    void refreshPlanModels();  // fetch the server's models for the planner and prose writer dropdowns
+    void populateModelCombos(); // "Settings default" + server models for the planner and prose dropdowns
     void onPlanModelChosen();
     void showPlanTemplate();     // select the novel's plan template in the dropdown
     void onPlanTemplateChosen();
@@ -201,6 +201,7 @@ class MainWindow : public QMainWindow
     QLabel *m_synopsisStatus = nullptr;
     QPushButton *m_generateButton = nullptr;
     QComboBox *m_planModelCombo = nullptr;
+    QComboBox *m_proseModelCombo = nullptr;
     QComboBox *m_planTemplateCombo = nullptr;
     QLabel *m_planTemplateHint = nullptr;
     QPushButton *m_refreshModelsButton = nullptr;

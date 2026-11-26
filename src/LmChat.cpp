@@ -60,14 +60,30 @@ ChatCompletion::ChatCompletion(const QUrl &server, const QString &model, const Q
 {
 }
 
+void ChatCompletion::setReasoning(Reasoning reasoning)
+{
+    m_reasoning = reasoning;
+}
+
 void ChatCompletion::start()
 {
+    QList<ChatMessage> sent = m_messages;
+    if (m_reasoning == Reasoning::Off) {
+        // Qwen3's switch for thinking. In the system message, so models without it don't take it as text to answer.
+        if (!sent.isEmpty() && sent.first().role == QLatin1String("system")) {
+            sent.first().content += QStringLiteral("\n\n/no_think");
+        } else {
+            sent.prepend({QStringLiteral("system"), QStringLiteral("/no_think")});
+        }
+    }
     QJsonArray messages;
-    for (const ChatMessage &m : m_messages) {
+    for (const ChatMessage &m : sent) {
         messages.append(QJsonObject{{"role", m.role}, {"content", m.content}});
     }
-    const QJsonObject body{
-        {"model", m_model}, {"messages", messages}, {"temperature", m_temperature}, {"stream", true}};
+    QJsonObject body{{"model", m_model}, {"messages", messages}, {"temperature", m_temperature}, {"stream", true}};
+    if (m_reasoning != Reasoning::Default) {
+        body.insert("reasoning_effort", "low"); // gpt-oss: the lowest effort it supports
+    }
 
     QUrl url = m_server;
     url.setPath(m_server.path() + "/v1/chat/completions");

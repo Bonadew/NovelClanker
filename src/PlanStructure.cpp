@@ -20,7 +20,19 @@ QString cleanTitle(QString text)
     text.remove(trailing);
     static const Re leading(QStringLiteral(R"(^[\s:.\-–—]+)"));
     text.remove(leading);
-    return text.trimmed();
+    text = text.trimmed();
+    // Models often quote titles: "The Storm", “The Storm”, «The Storm». Only a matching pair around the whole
+    // title is removed, so "'Twas Night" or “Run,” She Said keep theirs.
+    static const QStringList pairs{QStringLiteral("\"\""), QStringLiteral("''"), QStringLiteral("“”"),
+                                   QStringLiteral("‘’"), QStringLiteral("„“"), QStringLiteral("„”"),
+                                   QStringLiteral("«»"), QStringLiteral("»«")};
+    for (const QString &pair : pairs) {
+        if (text.size() > 2 && text.front() == pair[0] && text.back() == pair[1] &&
+            !text.mid(1, text.size() - 2).contains(pair[1])) {
+            return text.mid(1, text.size() - 2).trimmed();
+        }
+    }
+    return text;
 }
 
 // Removes a leading separator (": ", " - ", "— ") from text that follows a title.

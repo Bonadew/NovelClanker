@@ -78,6 +78,19 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent), m_client(new 
     modelForm->addRow(tr("Prose writer:"), m_proseCombo);
     modelForm->addRow(QString(), makeHint(tr("Writes the scene text."), this));
 
+    // Reasoning ("thinking") models can use up their length limit before they answer.
+    m_reasoningCombo = new QComboBox(this);
+    m_reasoningCombo->setObjectName("reasoningCombo");
+    m_reasoningCombo->addItem(tr("Model default"), static_cast<int>(Reasoning::Default));
+    m_reasoningCombo->addItem(tr("Low"), static_cast<int>(Reasoning::Low));
+    m_reasoningCombo->addItem(tr("Off where possible"), static_cast<int>(Reasoning::Off));
+    m_reasoningCombo->setCurrentIndex(m_reasoningCombo->findData(static_cast<int>(settings.reasoning)));
+    modelForm->addRow(tr("Reasoning:"), m_reasoningCombo);
+    modelForm->addRow(QString(), makeHint(tr("How long reasoning models think before answering. Less is faster and "
+                                             "leaves more of the length limit for the answer. Low works with gpt-oss; "
+                                             "Off turns thinking off in Qwen3 (gpt-oss then reasons at Low)."),
+                                          this));
+
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &SettingsDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &SettingsDialog::reject);
@@ -147,6 +160,7 @@ void SettingsDialog::accept()
     settings.serverUrl = url.toString();
     settings.plannerModel = ModelCombo::selectedId(m_plannerCombo);
     settings.proseModel = ModelCombo::selectedId(m_proseCombo);
+    settings.reasoning = static_cast<Reasoning>(m_reasoningCombo->currentData().toInt());
     settings.save();
     QDialog::accept();
 }

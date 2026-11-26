@@ -528,7 +528,7 @@ void testPlanTemplateChoice(const fs::path &dir)
         const Ui u = ui(w);
         auto *combo = w.findChild<QComboBox *>("planTemplateCombo");
         auto *hint = w.findChild<QLabel *>("planTemplateHint");
-        EXPECT(combo && hint && combo->count() == 2);
+        EXPECT(combo && hint && combo->count() == 3);
         EXPECT(combo->currentData().toString() == "three-act" && hint->text().contains("three acts"));
 
         combo->setCurrentIndex(combo->findData("inner-stages"));
@@ -684,6 +684,71 @@ void testProseWriter(const fs::path &dir)
     EXPECT(store.sceneText(scenes[0].id) == "Intro.\n\nShe opens it slowly, and reads.\n\nThe end came soon.");
     EXPECT(QString::fromStdString(store.sceneText(scenes[1].id)).startsWith("The wind rose again."));
     EXPECT(QSettings().value("prose/length").toInt() == 200); // the length choice is remembered
+}
+
+// @relation(PLN-7, FR-PRS-1, scope=function)
+void testProseModelChoice(const fs::path &dir)
+{
+    FakeServer server;
+    server.routes["/api/v1/models"] = {200, kSampleNativeModels}; // alpha-27b, zeta-7b (+ an embedding model)
+    server.routes["/v1/chat/completions"] = {200, sseStream({"She opens it slowly."}), "text/event-stream"};
+    useServer(server, "planner-x");
+    AiSettings settings = AiSettings::load();
+    settings.proseModel = "writer-x";
+    settings.save();
+    {
+        MainWindow w;
+        EXPECT(w.openNovel(toQ(dir), NovelStore::Mode::Create));
+        auto *combo = w.findChild<QComboBox *>("proseModelCombo");
+        auto *planCombo = w.findChild<QComboBox *>("planModelCombo");
+        auto *tree = w.findChild<QTreeWidget *>("manuscriptTree");
+        auto *scene = w.findChild<QPlainTextEdit *>("sceneEdit");
+        auto *expand = w.findChild<QPushButton *>("expandButton");
+        auto *status = w.findChild<QLabel *>("proseStatus");
+        EXPECT(combo && planCombo && tree && scene && expand && status);
+        EXPECT(combo->parentWidget() == expand->parentWidget()); // in the bar above the scene
+        EXPECT(waitFor([&] { return combo->count() == 3; })); // the server's models were fetched
+        EXPECT(combo->itemText(0) == "Settings default (writer-x)" && combo->currentIndex() == 0);
+        EXPECT(combo->findData("alpha-27b") > 0 && combo->findData("nomic-embed") < 0);
+        tree->setCurrentItem(tree->topLevelItem(0)->child(0)->child(0));
+        scene->setPlainText("She opens it.");
+        EXPECT(expand->toolTip().contains("writer-x (from Settings)"));
+
+        // A model chosen here is used for the next request; the planner choice is unaffected.
+        combo->setCurrentIndex(combo->findData("zeta-7b"));
+        EXPECT(expand->toolTip().contains("Uses zeta-7b."));
+        EXPECT(planCombo->currentIndex() == 0);
+        expand->click();
+        EXPECT(combo->isEnabled() == false); // fixed while writing
+        EXPECT(waitFor([&] { return status->text().startsWith("Done"); }));
+        EXPECT(combo->isEnabled());
+        EXPECT(QJsonDocument::fromJson(server.lastRequestBody).object().value("model").toString() == "zeta-7b");
+
+        // Another model for the next expansion.
+        combo->setCurrentIndex(combo->findData("alpha-27b"));
+        scene->selectAll();
+        expand->click();
+        EXPECT(waitFor([&] { return status->text().startsWith("Done") && !scene->isReadOnly(); }));
+        EXPECT(QJsonDocument::fromJson(server.lastRequestBody).object().value("model").toString() == "alpha-27b");
+
+        // Back to the Settings default.
+        combo->setCurrentIndex(0);
+        scene->selectAll();
+        expand->click();
+        EXPECT(waitFor([&] { return status->text().startsWith("Done") && !scene->isReadOnly(); }));
+        EXPECT(QJsonDocument::fromJson(server.lastRequestBody).object().value("model").toString() == "writer-x");
+
+        // The choice survives a refresh of the model list.
+        combo->setCurrentIndex(combo->findData("zeta-7b"));
+        server.routes["/api/v1/models"] = {200, QByteArray(kSampleNativeModels).replace("alpha-27b", "beta-13b")};
+        w.findChild<QPushButton *>("refreshPlanModelsButton")->click();
+        EXPECT(waitFor([&] { return combo->findData("beta-13b") > 0; }));
+        EXPECT(combo->currentData().toString() == "zeta-7b" && combo->findData("alpha-27b") < 0);
+        w.close();
+    }
+    EXPECT(AiSettings::load().proseModel == "writer-x"); // Settings untouched
+    NovelStore store(dir, NovelStore::Mode::Open);
+    EXPECT(store.planModelOverride().empty()); // and nothing stored in the novel
 }
 
 // Lightness of the colour the highlighter gave the first block's text.
@@ -1121,6 +1186,7 @@ int main(int argc, char **argv)
     testCreateStructureFromPlan(root / "structure.novel");
     testPlanTemplateChoice(root / "template.novel");
     testProseWriter(root / "prose.novel");
+    testProseModelChoice(root / "prose-model.novel");
     testTheme(root / "theme.novel");
     testTextSize(root / "textsize.novel");
     fs::create_directories(root / "import");

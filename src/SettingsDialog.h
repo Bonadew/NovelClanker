@@ -32,4 +32,5 @@ class SettingsDialog : public QDialog
     QLabel *m_statusLabel = nullptr;
     QComboBox *m_plannerCombo = nullptr;
     QComboBox *m_proseCombo = nullptr;
+    QComboBox *m_reasoningCombo = nullptr;
 };
