@@ -1,7 +1,11 @@
 # NovelClanker
 
-A cross-platform Markdown-style editor for writing novels, built with C++20 and Qt 6 Widgets.
-Runs on Windows, Linux, and macOS.
+A novel editor with an assist from your own local model: [LM Studio](https://lmstudio.ai) serves an
+LLM on your machine, and NovelClanker puts it to work — it turns the synopsis into plans, refines them
+in a chat with you, and drafts or expands scenes where you want a hand, while you write the novel.
+Nothing goes through a cloud, an account or a subscription. The editor around the assistant is a plain
+Markdown-style one: a tree of acts, chapters and scenes, spell checking, Markdown import/export and
+EPUB 3 export. Built with C++20 and Qt 6 Widgets; runs on Windows, Linux and macOS.
 
 A synopsis becomes plans, then the manuscript the author writes:
 
@@ -26,6 +30,13 @@ flowchart LR
     class plans focus
     class prose helper
 ```
+
+It isn't fancy, and parts of it might be broken: I built NovelClanker for my own needs, not to be a
+product. If you are looking for something more polished with more features, take a look at
+[Sudowrite](https://sudowrite.com) (a cloud AI writing assistant),
+[Novelcrafter](https://www.novelcrafter.com) (an AI-assisted editor), [Atticus](https://atticus.io)
+(writing and book layout), [Novel Mage](https://novelmage.com) (offline AI writing) or
+[novelWriter](https://novelwriter.io) (open source, no AI) instead.
 
 ## Using it
 
