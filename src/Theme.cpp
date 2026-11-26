@@ -43,31 +43,33 @@ QPalette lightPalette()
     return p;
 }
 
+// Google's dark palette: Google Grey 900 backgrounds, near-white text, and the
+// light blue Google uses as the accent colour on dark surfaces.
 QPalette darkPalette()
 {
     QPalette p;
-    const QColor window(0x2b, 0x2b, 0x2b), text(0xe6, 0xe6, 0xe6), base(0x1e, 0x1e, 0x1e);
-    const QColor highlight(0x3d, 0x7e, 0xd6), disabled(0x7a, 0x7a, 0x7a);
+    const QColor window(0x20, 0x21, 0x24), text(0xe8, 0xea, 0xed), base(0x20, 0x21, 0x24);
+    const QColor highlight(0x8a, 0xb4, 0xf8), disabled(0x5f, 0x63, 0x68);
     p.setColor(QPalette::Window, window);
     p.setColor(QPalette::WindowText, text);
     p.setColor(QPalette::Base, base);
-    p.setColor(QPalette::AlternateBase, QColor(0x26, 0x26, 0x26));
-    p.setColor(QPalette::ToolTipBase, QColor(0x3a, 0x3a, 0x3a));
+    p.setColor(QPalette::AlternateBase, QColor(0x30, 0x31, 0x34));
+    p.setColor(QPalette::ToolTipBase, QColor(0x30, 0x31, 0x34));
     p.setColor(QPalette::ToolTipText, text);
-    p.setColor(QPalette::PlaceholderText, QColor(0x8c, 0x8c, 0x8c));
+    p.setColor(QPalette::PlaceholderText, QColor(0x9a, 0xa0, 0xa6));
     p.setColor(QPalette::Text, text);
-    p.setColor(QPalette::Button, QColor(0x35, 0x35, 0x35));
+    p.setColor(QPalette::Button, QColor(0x30, 0x31, 0x34));
     p.setColor(QPalette::ButtonText, text);
-    p.setColor(QPalette::BrightText, QColor(0xff, 0x6b, 0x6b));
-    p.setColor(QPalette::Light, QColor(0x4a, 0x4a, 0x4a));
-    p.setColor(QPalette::Midlight, QColor(0x3e, 0x3e, 0x3e));
-    p.setColor(QPalette::Mid, QColor(0x30, 0x30, 0x30));
-    p.setColor(QPalette::Dark, QColor(0x1a, 0x1a, 0x1a));
-    p.setColor(QPalette::Shadow, QColor(0x0d, 0x0d, 0x0d));
+    p.setColor(QPalette::BrightText, QColor(0xf2, 0x8b, 0x82));
+    p.setColor(QPalette::Light, QColor(0x3c, 0x40, 0x43));
+    p.setColor(QPalette::Midlight, QColor(0x35, 0x36, 0x3a));
+    p.setColor(QPalette::Mid, window);
+    p.setColor(QPalette::Dark, QColor(0x13, 0x14, 0x17));
+    p.setColor(QPalette::Shadow, QColor(0x10, 0x10, 0x11));
     p.setColor(QPalette::Highlight, highlight);
-    p.setColor(QPalette::HighlightedText, Qt::white);
-    p.setColor(QPalette::Link, QColor(0x6c, 0xb0, 0xff));
-    p.setColor(QPalette::LinkVisited, QColor(0xb5, 0x9c, 0xf0));
+    p.setColor(QPalette::HighlightedText, window); // Google pairs the blue accent with dark text
+    p.setColor(QPalette::Link, highlight);
+    p.setColor(QPalette::LinkVisited, QColor(0xc5, 0x8a, 0xf9));
     for (const auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText}) {
         p.setColor(QPalette::Disabled, role, disabled);
     }
