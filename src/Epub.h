@@ -9,14 +9,15 @@
 //
 // The book's metadata comes from the novel's details (Novel Setup): title, subtitle, author and contributors,
 // language, publisher, description, keywords, series and ISBN. The book has a title page, then one page per
-// chapter (headed by its title) with the scenes' Markdown turned into XHTML and a scene break between scenes. When
-// the novel has more than one act, each act also gets a part page, and the contents list chapters under their act.
+// chapter (headed by its title) with the scenes' Markdown turned into XHTML and a scene break between scenes.
+// When the novel has more than one act, each act also gets a part page, and the contents list chapters under
+// their act.
 namespace Epub {
 
 struct Options {
-    std::string fallbackTitle; // used when the novel has no title (e.g. its file name)
-    std::string identifier;    // the book's permanent identifier, e.g. from newIdentifier()
-    std::string modified;      // "2026-11-25T12:00:00Z"; empty: now
+  std::string fallbackTitle; // used when the novel has no title (e.g. its file name)
+  std::string identifier;    // the book's permanent identifier, e.g. from newIdentifier()
+  std::string modified;      // "2026-11-25T12:00:00Z"; empty: now
 };
 
 // The .epub file's bytes.

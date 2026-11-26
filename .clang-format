@@ -6,4 +6,5 @@ BreakBeforeBraces: Custom
 ColumnLimit: 110
 InsertBraces: true
 InsertNewlineAtEOF: true
+ReflowComments: false # comment text is never reflowed: StrictDoc's @relation markers must stay on one line
 SeparateDefinitionBlocks: Always

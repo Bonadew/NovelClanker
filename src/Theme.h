@@ -5,9 +5,9 @@
 
 // Light and dark mode for the whole application.
 //
-// System follows the platform: its own style and colours (and its light/dark setting where it has one). Light and
-// Dark use the Fusion style with a fixed palette, so they look the same on every platform, and also tell the
-// platform which scheme is used (on Windows 11 this makes the title bar match).
+// System follows the platform: its own style and colours (and its light/dark setting where it has one). Light
+// and Dark use the Fusion style with a fixed palette, so they look the same on every platform, and also tell
+// the platform which scheme is used (on Windows 11 this makes the title bar match).
 namespace Theme {
 
 enum class Mode { System, Light, Dark };
@@ -19,7 +19,7 @@ void save(Mode mode);
 // Applies `mode` to the running application. Call after the QApplication exists.
 void apply(Mode mode);
 
-QString toString(Mode mode); // "system", "light", "dark"
+QString toString(Mode mode);          // "system", "light", "dark"
 Mode fromString(const QString &text); // System for anything unknown
 
 // True when the palette has light text on a dark background.

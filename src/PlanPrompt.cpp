@@ -5,7 +5,8 @@ namespace PlanPrompt {
 namespace {
 
 // The classic plot-driven model: three acts of about 25/50/25% with named turning points.
-const QString kThreeActInstructions = QStringLiteral(R"PROMPT(Create a plan for the novel described by the synopsis at the end of this message.
+const QString kThreeActInstructions =
+    QStringLiteral(R"PROMPT(Create a plan for the novel described by the synopsis at the end of this message.
 
 Requirements:
 - Stay faithful to the synopsis: keep its characters, events, tone and ending. Where it is vague, make choices that fit its genre and tone, and list every important invention under "Open questions" so the author can confirm or change it.
@@ -70,7 +71,8 @@ Synopsis:
 // A character-driven model for stories told across many years: the novel follows the protagonist through
 // successive inner stages (as in the stages of grief) instead of a plot with turning points. Time passes
 // through concrete markers in the scenes, never through "years later" summaries, and the ending may be bleak.
-const QString kInnerStagesInstructions = QStringLiteral(R"PROMPT(Create a plan for the novel described by the synopsis at the end of this message.
+const QString kInnerStagesInstructions =
+    QStringLiteral(R"PROMPT(Create a plan for the novel described by the synopsis at the end of this message.
 
 This novel is character-driven and told across many years. Plan it as the protagonist's progression through a sequence of inner stages, like the stages of grief, not as a three-act plot with turning points.
 
@@ -136,7 +138,8 @@ Synopsis:
 // A short story: one protagonist, one conflict, a short span of time and a single effect. Planned in three
 // parts (beginning, middle, end) with few scenes, each with a target length, so the whole story stays within
 // a short story's length. A short story has no chapters, so each part holds exactly one chapter.
-const QString kShortStoryInstructions = QStringLiteral(R"PROMPT(Create a plan for the short story described by the synopsis at the end of this message.
+const QString kShortStoryInstructions = QStringLiteral(
+    R"PROMPT(Create a plan for the short story described by the synopsis at the end of this message.
 
 A short story is not a small novel. It follows one protagonist through one central conflict over a short span of time, with few characters and few settings, and everything in it works toward a single effect: one dominant emotion or impression the reader is left with.
 
@@ -212,49 +215,53 @@ Synopsis:
 
 const QList<Template> &templates()
 {
-    static const QList<Template> all{
-        {kThreeActTemplate, QStringLiteral("Three acts (25/50/25)"),
-         QStringLiteral("A plot-driven novel in three acts with the classic turning points: inciting incident, first plot "
-                        "point, midpoint, crisis, climax and resolution."),
-         kThreeActInstructions},
-        {kInnerStagesTemplate, QStringLiteral("Inner stages across years"),
-         QStringLiteral("A character-driven novel spanning many years, planned as the protagonist's progression through "
-                        "inner stages (like the stages of grief). Time passes through concrete markers in the scenes; the "
-                        "ending may be bleak or unresolved."),
-         kInnerStagesInstructions},
-        {kShortStoryTemplate, QStringLiteral("Short story"),
-         QStringLiteral("A short story (about 3,000 to 7,500 words unless the synopsis says otherwise): one protagonist, "
-                        "one conflict and a single effect, in a beginning, middle and end of 3 to 8 scenes, each with a "
-                        "target length."),
-         kShortStoryInstructions},
-    };
-    return all;
+  static const QList<Template> all{
+      {kThreeActTemplate, QStringLiteral("Three acts (25/50/25)"),
+       QStringLiteral(
+           "A plot-driven novel in three acts with the classic turning points: inciting incident, first plot "
+           "point, midpoint, crisis, climax and resolution."),
+       kThreeActInstructions},
+      {kInnerStagesTemplate, QStringLiteral("Inner stages across years"),
+       QStringLiteral(
+           "A character-driven novel spanning many years, planned as the protagonist's progression through "
+           "inner stages (like the stages of grief). Time passes through concrete markers in the scenes; the "
+           "ending may be bleak or unresolved."),
+       kInnerStagesInstructions},
+      {kShortStoryTemplate, QStringLiteral("Short story"),
+       QStringLiteral(
+           "A short story (about 3,000 to 7,500 words unless the synopsis says otherwise): one protagonist, "
+           "one conflict and a single effect, in a beginning, middle and end of 3 to 8 scenes, each with a "
+           "target length."),
+       kShortStoryInstructions},
+  };
+  return all;
 }
 
 const Template &templateById(const QString &id)
 {
-    for (const Template &t : templates()) {
-        if (t.id == id) {
-            return t;
-        }
+  for (const Template &t : templates()) {
+    if (t.id == id) {
+      return t;
     }
-    return templates().front();
+  }
+  return templates().front();
 }
 
 QString systemPrompt()
 {
-    return QStringLiteral(
-        R"(You are an experienced developmental editor and story architect. You turn the synopsis of a novel or short story into a clear, practical writing plan that an author (or a writing assistant) can follow scene by scene. You plan the story; you do not write its prose. You follow the requested output format exactly.)");
+  return QStringLiteral(
+      R"(You are an experienced developmental editor and story architect. You turn the synopsis of a novel or short story into a clear, practical writing plan that an author (or a writing assistant) can follow scene by scene. You plan the story; you do not write its prose. You follow the requested output format exactly.)");
 }
 
 QString userPrompt(const QString &synopsis, const QString &templateId)
 {
-    return templateById(templateId).instructions + "\n" + synopsis + "\n\"\"\"";
+  return templateById(templateId).instructions + "\n" + synopsis + "\n\"\"\"";
 }
 
 QList<ChatMessage> messages(const QString &synopsis, const QString &templateId)
 {
-    return {{QStringLiteral("system"), systemPrompt()}, {QStringLiteral("user"), userPrompt(synopsis, templateId)}};
+  return {{QStringLiteral("system"), systemPrompt()},
+          {QStringLiteral("user"), userPrompt(synopsis, templateId)}};
 }
 
 } // namespace PlanPrompt

@@ -18,25 +18,28 @@
 namespace PlanStructure {
 
 struct Scene {
-    QString title;
-    QString brief;
+  QString title;
+  QString brief;
 };
+
 struct Chapter {
-    QString title;
-    QString brief;
-    QList<Scene> scenes;
+  QString title;
+  QString brief;
+  QList<Scene> scenes;
 };
+
 struct Act {
-    QString title;
-    QString brief;
-    QList<Chapter> chapters;
+  QString title;
+  QString brief;
+  QList<Chapter> chapters;
 };
 
 QList<Act> parse(const QString &plan);
 
 struct Counts {
-    int acts = 0, chapters = 0, scenes = 0;
+  int acts = 0, chapters = 0, scenes = 0;
 };
+
 Counts count(const QList<Act> &acts);
 
 } // namespace PlanStructure

@@ -17,9 +17,9 @@ namespace PlanChat {
 inline constexpr double kTemperature = 0.5;
 
 struct Turn {
-    QString role;            // "user" or "assistant"
-    QString content;         // for the assistant: the message without the revised plan
-    bool planApplied = false; // the assistant's revised plan was applied to the plan
+  QString role;             // "user" or "assistant"
+  QString content;          // for the assistant: the message without the revised plan
+  bool planApplied = false; // the assistant's revised plan was applied to the plan
 };
 
 // History persistence (JSON array). Invalid input yields an empty history.
@@ -31,15 +31,16 @@ QList<ChatMessage> messages(const QString &synopsis, const QString &plan, const 
                             const QString &userMessage);
 
 struct Reply {
-    QString message;            // the reply without the plan block
-    std::optional<QString> plan; // complete revised plan, if the reply contained one
-    bool planCutOff = false;     // a plan block was started but not finished (not usable)
+  QString message;             // the reply without the plan block
+  std::optional<QString> plan; // complete revised plan, if the reply contained one
+  bool planCutOff = false;     // a plan block was started but not finished (not usable)
 };
+
 Reply parseReply(const QString &reply);
 
 // Models sometimes return only the changed part of a plan despite being asked for all of it. Returns why
-// `revised` looks like a partial copy of `current` (fewer acts, far fewer chapters, much shorter), or an empty
-// string if it looks complete.
+// `revised` looks like a partial copy of `current` (fewer acts, far fewer chapters, much shorter), or an
+// empty string if it looks complete.
 QString incompleteReason(const QString &current, const QString &revised);
 
 // What to show while a reply streams in: the message so far, without a (partial) plan block.
